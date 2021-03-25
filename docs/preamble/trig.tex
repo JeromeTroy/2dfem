@@ -1,0 +1,49 @@
+\renewcommand{\sin}[2][1]{
+    \mathrm{sin}^{
+        \ifthenelse{\equal{#1}{1}}{}{\,#1}
+    }
+    \left( #2 \right)
+}
+\renewcommand{\cos}[2][1]{
+    \mathrm{cos}^{
+        \ifthenelse{\equal{#1}{1}}{}{\,#1}
+    }
+    \left( #2 \right)
+}
+\renewcommand{\cot}[1]{\mathrm{cot}\left( #1 \right)}
+\renewcommand{\cosh}[2][1]{
+    \mathrm{cosh}^{
+        \ifthenelse{\equal{#1}{1}}{}{\,#1}
+    }
+    \left( #2 \right)
+}
+\renewcommand{\sinh}[2][1]{
+    \mathrm{sinh}^{
+        \ifthenelse{\equal{#1}{1}}{}{\,#1}
+    }
+    \left( #2 \right)
+}
+\renewcommand{\tanh}[1]{
+		\mathrm{tanh}\left( #1 \right)
+}
+\renewcommand{\tan}[1]{
+		\mathrm{tan}\left( #1 \right)
+}
+\newcommand{\sech}[2][1]{
+		\mathrm{sech}^{
+				\ifthenelse{\equal{#1}{1}}{}{\,#1}
+		}
+		\left( #2 \right)
+}
+\newcommand{\asin}[1]{
+		\mathrm{arcsin}\left( #1 \right)
+}
+\newcommand{\acos}[1]{
+		\mathrm{arccos}\left( #1 \right)
+}
+\newcommand{\atan}[1]{
+		\mathrm{arctan}\left( #1 \right)
+}
+
+
+

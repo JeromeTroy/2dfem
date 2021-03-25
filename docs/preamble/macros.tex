@@ -1,0 +1,104 @@
+% macros file
+%% packages
+
+% bibliography
+\usepackage{cite}
+
+% fonts
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+
+% ams stuff
+\usepackage{amsthm, amsmath, amssymb, amsfonts}
+
+% bold math
+\usepackage{bbold, bm, bbm}
+
+% various letters for enumerate fields
+\usepackage{enumitem}
+
+% if statments
+\usepackage{xifthen}
+
+% graphics
+\usepackage{graphicx, float}
+
+% making figures in tex
+\usepackage{tikz, pgfplots}
+    \pgfplotsset{compat=1.9}   
+
+%% math commands
+
+% sign of value
+\newcommand{\sgn}[1]{\mathrm{sgn}\left( #1 \right)}
+
+% function support
+\newcommand{\supp}[1]{\mathrm{supp}\left( #1 \right)}
+
+% function restriction
+\newcommand{\restrict}[2]{\left. #1 \right|_{ #2 } }
+
+% vectors and vector spaces
+\renewcommand{\vec}[1]{\bm{#1}}
+\newcommand{\norm}[1]{\left|\left| #1 \right|\right|}
+\newcommand{\inner}[1]{\left\langle #1 \right\rangle}
+
+% special functions
+\renewcommand{\exp}[1]{\text{exp}\left(#1\right)}
+\renewcommand{\log}[1]{
+		\mathrm{log}\left( #1 \right)
+}
+
+\input{preamble/trig}
+
+% sets
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Z}{\mathbb{Z}}
+
+% derivatives
+\input{preamble/derivatives}
+
+% finite element stuff
+\input{preamble/fem}
+
+% functional stuff
+\newcommand{\embeds}{\hookrightarrow}
+
+% probability
+\newcommand{\E}[2][1]{
+		\mathbb E_{
+				\ifthenelse{\equal{#1}{1}}{}{#1}
+		} \left[ #2 \right]
+}
+\newcommand{\var}[1]{
+		\mathrm{Var}\left( #1 \right)
+}
+\newcommand{\relent}[2]{
+		D_\mathrm{KL} \left(
+		#1 \mid \mid #2 \right)
+}
+
+
+% page setup
+\everymath{\displaystyle}
+\usepackage[margin=1in]{geometry}
+
+\textheight 9in
+\oddsidemargin 0pt
+\evensidemargin \oddsidemargin
+\marginparwidth 0.5in
+\textwidth 6.5in 
+
+\setlength{\parindent}{0pt}
+
+\newcommand{\femtitle}[1]{
+		\textbf{ University of Delaware \\
+		Department of Mathematical Sciences \\
+		Math 838 : Finite Element and Boundary Element Methods \\
+		Jerome Troy \\
+		\vskip 0.25in
+		Homework #1}
+}
+

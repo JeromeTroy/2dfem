@@ -1,0 +1,25 @@
+\usepackage{xifthen}
+
+\renewcommand{\vec}[1]{\mathbf{#1}}
+
+\newcommand{\der}[3][1]{
+	\frac{{\text{d}^{
+		\ifthenelse{\equal{#1}{1}}{}{\,#1}
+	}
+	{#2} }}
+	{\text{d} {#3}^{
+		\ifthenelse{\equal{#1}{1}}{}{#1}
+	}
+	}
+}
+
+\newcommand{\pder}[3][1]{
+	\frac{\partial^{
+		\ifthenelse{\equal{#1}{1}}{}{\,#1}
+	}
+	{#2}}
+	{\partial {#3}^{
+		\ifthenelse{\equal{#1}{1}}{}{#1}
+	}
+	}
+}

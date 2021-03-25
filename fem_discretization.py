@@ -224,8 +224,10 @@ class P1FEMDiscretization():
                     cols.append(j)
                     for m in elements_list:
                         # which phi_i are we using
-                        relative_index_i = np.where(self.mesh.elements[m, :] == i)[0][0]
-                        relative_index_j = np.where(self.mesh.elements[m, :] == j)[0][0]
+                        relative_index_i = np.where(
+                            self.mesh.elements[m, :] == i)[0][0]
+                        relative_index_j = np.where(
+                            self.mesh.elements[m, :] == j)[0][0]
                         
                         # build integrand
                         integrand = np.dot(self.grad_phi_hat[relative_index_i, :], 
@@ -338,7 +340,7 @@ class P1FEMDiscretization():
         self.whole_stiffness_matrix = stiffness_matrix
         return stiffness_matrix
         
-    def assemble_load_vector_fast(self, f):
+    def assemble_load_vector(self, f):
         
         # recognizing the load vector is S @ f
         # where S is stiffness matrix
@@ -349,56 +351,6 @@ class P1FEMDiscretization():
         f_vec = np.array(list(map(f, list(self.mesh.coordinates))))
         load_vec = self.whole_stiffness_matrix @ f_vec
         
-        self.whole_load_vector = load_vec
-        
-        return load_vec
-                        
-            
-        
-    def assemble_load_vector_default(self, f):
-        """
-        Assemble load vector for system
-
-        Parameters
-        ----------
-        f : callable f(x)
-            load function for fem.
-
-        Returns
-        -------
-        load_vec : N x 1 vector
-            load vector for global system.
-
-        """
-        # matrices for affine transformations (useful later)
-        matrices = self.mesh.compute_affine_transformation_matrices()
-        det_B = self.mesh.affine_trans_det()
-        
-        # allocate space
-        N = np.shape(self.mesh.coordinates)[0]
-        load_vec = np.zeros(N)
-        
-        # assign element wise
-        for i in range(N):
-            # where is this global nodal function supported
-            support = self.__collect_support__(i)
-            
-            # iterate over elements in support
-            for tri in support:
-                # which phi_i
-                relative_index = np.where(self.mesh.elements[tri, :] == i)[0][0]
-                
-                # integrand
-                affine_trans = lambda xhat: matrices[tri] @ xhat + \
-                    self.mesh.coordinates[self.mesh.elements[tri, 0]]
-                fun = lambda yhat, xhat: f(affine_trans(np.array([xhat, yhat]))) * \
-                    self.phi_hat[relative_index](xhat, yhat)
-                
-                # integrate
-                load_vec[i] += dblquad(fun, self.mesh.xhat_bound[0], 
-                                      self.mesh.xhat_bound[1], 0, 
-                                      self.mesh.yhat_bound)[0] * det_B[tri]
-                
         self.whole_load_vector = load_vec
         
         return load_vec
@@ -417,16 +369,25 @@ class P1FEMDiscretization():
         new_dirichlet = np.zeros([2 * np.shape(self.dirichletbc)[0], 2])
         for j in range(np.shape(self.dirichletbc)[0]):
             current_edge = self.dirichletbc[j, :]
-            new_dirichlet[2 * j, :] = [current_edge[0], midpoints[current_edge[:]]]
-            new_dirichlet[2 * j + 1, :] = [midpoints[current_edge[:]], current_edge[-1]]
+            new_dirichlet[2 * j, :] = [current_edge[0], 
+                                       midpoints[current_edge[0], 
+                                                 current_edge[1]]]
+            new_dirichlet[2 * j + 1, :] = [midpoints[current_edge[0], 
+                                                     current_edge[1]], 
+                                           current_edge[-1]]
 
         new_neumann = np.zeros([2 * np.shape(self.neumannbc)[0], 2])
         for j in range(np.shape(self.neumannbc)[0]):
             current_edge = self.neumannbc[j, :]
-            new_neumann[2 * j, :] = [current_edge[0], midpoints[current_edge[:]]]
-            new_neumann[2 * j + 1, :] = [midpoints[current_edge[:]], current_edge[-1]]
+            new_neumann[2 * j, :] = [current_edge[0], 
+                                     midpoints[current_edge[0], 
+                                               current_edge[1]]]
+            new_neumann[2 * j + 1, :] = [midpoints[current_edge[0], 
+                                                   current_edge[1]], 
+                                         current_edge[-1]]
 
-        self.set_boundaries(new_dirichlet, new_neumann)
+        self.set_boundaries(new_dirichlet.astype(np.int), 
+                            new_neumann.astype(np.int))
 
 
     def neumann_edge_lengths(self):
@@ -486,6 +447,61 @@ class P1FEMDiscretization():
         else:
             return None
         
+    def plot_mesh(self, show_indices=False, **kwargs):
+        """
+        Plot mesh with boundary conditions
+
+        Parameters
+        ----------
+        show_indices : boolean, optional
+            whether to display index numbers for each node.
+            The default is False.
+        **kwargs : extra arguments for plotting
+
+        Returns
+        -------
+        fig : matplotlib figure
+            figure containing plot.
+        ax : matplotlib axis
+            axis on figure containing plot.
+
+        """
+        
+        # plot mesh showing indices
+        fig, ax = self.mesh.plot_mesh(show_indices=show_indices, **kwargs)
+        
+        # colors of edges
+        dirichlet_color = "g"
+        neumann_color = "y"
+
+        # plot dirichlet bc
+        for edge_no in range(np.shape(self.dirichletbc)[0]):
+            
+            x_lst = self.mesh.coordinates[self.dirichletbc[edge_no], 0]
+            y_lst = self.mesh.coordinates[self.dirichletbc[edge_no], 1]
+            
+            if edge_no == 0:
+                ax.plot(x_lst, y_lst, dirichlet_color, label="dirichlet")
+            else:
+                ax.plot(x_lst, y_lst, dirichlet_color)
+        
+        # plot neumann bc
+        for edge_no in range(np.shape(self.neumannbc)[0]):
+            
+            x_lst = self.mesh.coordinates[self.neumannbc[edge_no], 0]
+            y_lst = self.mesh.coordinates[self.neumannbc[edge_no], 1]
+            
+            if edge_no == 0:
+                ax.plot(x_lst, y_lst, neumann_color, label="neumann")
+            else:
+                ax.plot(x_lst, y_lst, neumann_color)
+            
+        # add legend and return
+        ax.legend()
+        return fig, ax
+        
+            
+        
         
 if __name__ == "__main__":
     
@@ -496,23 +512,26 @@ if __name__ == "__main__":
     
     disc1 = P1FEMDiscretization(mesh=mesh)
     
-    M = disc1.assemble_mass_matrix()
-    S = disc1.assemble_stiffness_matrix()
-    b_default = disc1.assemble_load_vector_default(f)
-    b_fast = disc1.assemble_load_vector_fast(f)
+    dirichlet_edges = np.array([
+        [0, 1], 
+        [1, 4], 
+        [4, 5], 
+        [5, 10], 
+        [10, 9]])
+    neumann_edges = np.array([
+        [9, 8], 
+        [8, 3],
+        [3, 0]])
     
-    print(M.toarray())
-    print(np.round(S.toarray(), 3))
-    print(b_default)
-    print(b_fast)
-    print(np.array(list(map(f, list(disc1.mesh.coordinates)))))
+    disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    # mesh.unif_refine()
-    # mesh.unif_refine()
-    # disc2 = P1FEMDiscretization(mesh=mesh)
+    disc1.plot_mesh()
     
-    # disc2.assemble_mass_matrix()
-    # disc2.assemble_stiffness_matrix()
-    # disc2.assemble_load_vector_default(f)
-    # disc2.assemble_load_vector_default(f)
+    disc1.unif_refine()
+    
+    disc1.plot_mesh()
+    
+    disc1.unif_refine()
+    
+    disc1.plot_mesh()
     

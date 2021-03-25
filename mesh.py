@@ -37,6 +37,9 @@ class Mesh():
         # bound the default element
         self.yhat_bound = lambda x: 1 - x
         self.xhat_bound = [0, 1]
+        
+        self.det_B_vals = None
+        self.B_inverses = None
 
 
     def set_coordinates(self, coordinates):
@@ -217,43 +220,52 @@ class Mesh():
         """
         Compute determinant of affine transformation matrix
         """
-
-        # order coordinates for each triangle
-        first_coords = self.coordinates[self.elements[:, 0], :]
-        second_coords = self.coordinates[self.elements[:, 1], :]
-        third_coords = self.coordinates[self.elements[:, 2], :]
-
-        # vectors forming sides of triangles
-        xy12 = second_coords - first_coords
-        xy13 = third_coords - first_coords
-
-        # determinant via cross products
-        det_B = xy12[:, 0] * xy13[:, 1] - xy13[:, 0] * xy12[:, 1]
+        
+        if self.det_B_vals is not None:
+            return self.det_B_vals
+        
+        else:
+            # order coordinates for each triangle
+            first_coords = self.coordinates[self.elements[:, 0], :]
+            second_coords = self.coordinates[self.elements[:, 1], :]
+            third_coords = self.coordinates[self.elements[:, 2], :]
+    
+            # vectors forming sides of triangles
+            xy12 = second_coords - first_coords
+            xy13 = third_coords - first_coords
+    
+            # determinant via cross products
+            det_B = xy12[:, 0] * xy13[:, 1] - xy13[:, 0] * xy12[:, 1]
 
         return det_B
 
     def affine_trans_mat_inverse(self):
         
-        det_B = self.affine_trans_det()
+        if self.B_inverses is not None:
+            return self.B_inverses
         
-        matrices = np.ones([np.shape(self.elements)[0], 2, 2]) / \
-            np.tile(det_B, [2, 2, 1]).T
-        
-        # assign each element for each matrix in parallel
-        # z_2y - z_0y
-        matrices[:, 0, 0] *= self.coordinates[self.elements[:, 2], 1] - \
-            self.coordinates[self.elements[:, 0], 1]
-        # -(z_2x - z_0x)
-        matrices[:, 0, 1] *= -(self.coordinates[self.elements[:, 2], 0] - 
-                              self.coordinates[self.elements[:, 0], 0])
-        # -(z_1y - z_0y)
-        matrices[:, 1, 0] *= -(self.coordinates[self.elements[:, 1], 1] - 
-                              self.coordinates[self.elements[:, 0], 1])
-        # z_1x - z_0x
-        matrices[:, 1, 1] *= self.coordinates[self.elements[:, 1], 0] - \
-            self.coordinates[self.elements[:, 0], 0]
+        else:
+            det_B = self.affine_trans_det()
             
-        return matrices
+            # start by scaling by determinants
+            matrices = np.ones([np.shape(self.elements)[0], 2, 2]) / \
+                np.tile(det_B, [2, 2, 1]).T
+            
+            # assign each element for each matrix in parallel
+            # z_2y - z_0y
+            matrices[:, 0, 0] *= self.coordinates[self.elements[:, 2], 1] - \
+                self.coordinates[self.elements[:, 0], 1]
+            # -(z_2x - z_0x)
+            matrices[:, 0, 1] *= -(self.coordinates[self.elements[:, 2], 0] - 
+                                  self.coordinates[self.elements[:, 0], 0])
+            # -(z_1y - z_0y)
+            matrices[:, 1, 0] *= -(self.coordinates[self.elements[:, 1], 1] - 
+                                  self.coordinates[self.elements[:, 0], 1])
+            # z_1x - z_0x
+            matrices[:, 1, 1] *= self.coordinates[self.elements[:, 1], 0] - \
+                self.coordinates[self.elements[:, 0], 0]
+                
+            return matrices
 
     #############################################################################
     """
@@ -305,13 +317,32 @@ class Mesh():
 
         return gradient
 
-    def plot_mesh(self, **kwargs):
+    def plot_mesh(self, show_indices=False, **kwargs):
         """
-        Debugging method to plot mesh vertices and edges
+        Plot the mesh
+
+        Parameters
+        ----------
+        show_indices : boolean, optional
+            whether to show indices of each node on plot. The default is False.
+        **kwargs : other arguments for plotting.
+
+        Returns
+        -------
+        fig : matplotlib figure
+            figure containing plot.
+        ax : matplotlib figure axis
+            axis containing plot.
+
         """
 
         fig = plt.figure()
         ax = fig.add_subplot(111)
+        
+        if not show_indices:
+            symbol = "k^-"
+        else:
+            symbol = "k-"
 
         for element_no in range(self.num_elements):
             current_element = self.elements[element_no, :].astype(int)
@@ -325,8 +356,12 @@ class Mesh():
             x_lst = np.array(x_lst)
             y_lst = np.array(y_lst)
 
-            ax.plot(x_lst, y_lst, "k^-", **kwargs)
+            ax.plot(x_lst, y_lst, symbol, **kwargs)
 
+        if show_indices:
+            for coord_no in range(np.shape(self.coordinates)[0]):
+                ax.annotate(str(coord_no), self.coordinates[coord_no, :],
+                             fontsize=15, color="blue")
         return fig, ax
 
 

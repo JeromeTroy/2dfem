@@ -1,0 +1,368 @@
+\documentclass{article}
+
+\input{preamble/macros}
+
+\title{Basic Finite Elements}
+\author{Jerome Troy}
+\date{March 23, 2021}
+
+\begin{document}
+  
+\maketitle
+
+\section{The Problem}
+
+Let $\Omega \subset \R^2$ be a compact polygonal domain.  
+Let $\Gamma_N, \Gamma_D \subset \partial \Omega$ with
+\[
+  \Gamma_N \cap \Gamma_D = \emptyset, \quad 
+  \Gamma_N \cup \Gamma_D = \partial \Omega
+.\] 
+Let $c \in \R$ be fixed and 
+$f : \Omega \to \R$ be a continuous function.
+The problem in question is
+\begin{gather}
+  -\nabla^2 u + c u = f \quad x \in \Omega \\
+  \restrict{u}{\Gamma_D} = u_D \quad x \in \Gamma_D \\
+  \restrict{\pder{u}{n}}{\Gamma_N} = g \quad x \in \Gamma_N
+.\end{gather}
+The goal is to solve this using the finite element method.
+
+
+\section{Triangular Mesh}
+
+To do this, we first partition $\Omega$ into a triangular mesh.  
+Let $\mathcal T = \{K_\ell\}_{\ell=0}^{N-1}$ where
+\[
+  K_\ell^\circ \cap K_j^\circ = \emptyset, \quad 
+  \bigcup_{\ell=0}^{N-1} K_\ell = \Omega
+.\] 
+Each $K_\ell$ is a triangle.  
+
+As a reference let 
+$\hat K$ be the triangle with vertices
+\[
+		\hat{\vec z_0} = \vec 0, \quad 
+		\hat{\vec z_1} = (1, 0)^T, \quad 
+		\hat{\vec z_2} = (0, 1)^T
+.\] 
+Then for each $\ell$ we define an affine transformation 
+of the form
+\[
+		\vec F_\ell : \hat K \to K_\ell, \quad 
+		\hat{\vec x} \to B_\ell \hat{\vec x} + \vec z^{(\ell)}_0
+.\] 
+Where
+\[
+  B_\ell = 
+  \begin{bmatrix}
+		  x^{(\ell)}_1 - x^{(\ell)}_0 & x^{(\ell)}_2 - x^{(\ell)}_0 \\
+		  y^{(\ell)}_1 - y^{(\ell)}_0 & y^{(\ell)}_2 - y^{(\ell)}_0
+  \end{bmatrix}
+.\] 
+In this way, $K_\ell$ has vertices 
+$\vec z^{(\ell)}_{0, 1, 2}$ and the affine transformation has
+\[
+		\vec F_\ell(\hat{\vec z_j}) = \vec z^{(\ell)}_j
+.\] 
+Thus for any triangle $K_\ell$ in the triangulation, we can
+always map back to the original reference triangle $\hat K$.
+
+\subsection{Continuous Piecewise Linear Functions}
+
+A finite element is of the form $(K, \mathcal P, \mathcal N)$.
+For this program, we will use $K = K_\ell$, then
+$\mathcal P$ will be the set of all linear polynomials defined on $K$,
+and $\mathcal N$ will be the degrees of freedom defined by
+\[
+		\mathcal N = \{N_0, N_1, N_2\}, \quad 
+		N_i(f) = f(\vec z_i)
+.\] 
+Using affine equivalence, these can be mapped back to the reference element:
+$(\hat K, \hat{\mathcal P}, \hat{\mathcal N})$.  
+Then $\hat{\mathcal N}$ induces a dual basis for $\hat{\mathcal P}$ of 
+the form
+\begin{gather}
+		\hat{\mathcal B} = \{\hat \varphi_0, \hat \varphi_1, \hat \varphi_2\}
+		\\
+		\hat \varphi_0(x, y) = 1 - x - y \\
+		\hat \varphi_1 = x \\
+		\hat \varphi_2 = y
+\end{gather}
+Using the affine transformation, we can map this basis on the 
+reference triangle to that of any triangle using
+\[
+		\varphi^{(\ell)}_i(\vec x) = 
+		\hat \varphi_i(\vec F^{-1}_\ell(\vec x))
+.\] 
+
+These basis functions can then be assembled together to build global 
+basis functions.  The global basis functions will be 
+$\{\phi_\ell\}_{\ell=0}^{N-1}$.  Each of which are defined on 
+all of $\Omega$.  These are designed so that 
+\[
+		\phi_\ell(\vec z_j) = \delta_{\ell j}
+.\] 
+Point evaluation of these functions is a bit complex, but proceeds as 
+follows.  
+Given $\vec x \in \Omega$, let $0 \leq \ell \leq N - 1$ so that 
+$\vec x \in K_\ell$.  Then if 
+$K_\ell \subset \supp \phi_i$ we have an index $k_{\ell i}$ which
+indicates for triangle $K_\ell$ that the node $\vec z_i$ occupies
+vertex $\vec z_{k_{\ell i}}^{(\ell)}$.
+Point evaluation is then given by
+\[
+		\phi_i(\vec x) = \varphi_{k_{\ell i}}^{(\ell)}(\vec x)
+.\] 
+
+In this way, we can write $\phi_i$ as follows. 
+Let 
+\[
+		\mathcal S_i = \{\ell : K_\ell \subset \supp \phi_i\}
+.\] 
+Then 
+\[
+		\phi_i(\vec x) = \sum_{\ell \in \mathcal S_i} 
+		\varphi_{k_{\ell i}}^{(\ell)}(\vec x) 
+		\mathbbm 1(\vec x \in K_\ell)
+.\] 
+
+
+\section{Assembling Matrix Forms}
+
+To place the problem into its FEM discretized form, we 
+build an approximation to $u$ of the form
+\[
+		u_h(\vec x) = \sum_{i=0}^{N-1} u_i \phi_i(\vec x)
+.\] 
+Let $V_h = H^1(\Omega)$.  This is the trial function space,
+where $u_h$ will live.  
+The test function space will be 
+\[
+		V_{h, D} = H_D^1(\Omega) = 
+		\{v \in H^1(\Omega) : \restrict{v}{\Gamma_D} = 0\}
+.\] 
+We will then apply the variational form.  Doing so for 
+$u \in H^1(\Omega), v \in H_D^1(\Omega)$ gives
+\[
+		\int_\Omega \nabla v \cdot \nabla u \, d^2 x + 
+		c \int_\Omega v u \, d^2 x - 
+		\int_{\Gamma_N} v g \, d\sigma = 
+		\int_\Omega v f \, d^2 x
+.\] 
+We next use the approximation for $u$:
+\[
+		\sum_{i=0}^{N-1} u_i \int_\Omega \nabla v \cdot \nabla \phi_i \, d^2 x
+		+ c \sum_{i=0}^{N-1} u_i \int_\Omega v \phi_i \, d^2 x = 
+		\int_\Omega v f \, d^2 x + 
+		\int_{\Gamma_N} v g \, d\sigma
+.\] 
+Next, since $v \in H^1(\Omega)$ we must require that 
+for $0 \leq j \leq N-1$ that 
+\[
+		\sum_{i=0}^{N-1} u_i \int_\Omega \nabla \phi_j \cdot 
+		\nabla \phi_i \, d^2 x + 
+		c \sum_{i=0}^{N-1} u_i \int_\Omega \phi_j \phi_i \, d^2 x = 
+		\int_\Omega \phi_j f \, d^2 x + 
+		\int_{\Gamma_N} \phi_j g \, d\sigma
+.\] 
+Thus it is imperitive that we compute the following matrices and vectors.
+\begin{itemize}
+  \item Mass matrix, $M$:
+		  \[
+				  M_{ij} = \int_\Omega \nabla \phi_i \cdot \nabla \phi_j 
+				  \, d^2 x 
+		  .\] 
+  \item Stiffness matrix, $S$:
+		  \[
+				  S_{ij} = \int_\Omega \phi_i \phi_j \, d^2 x 
+		  .\] 
+  \item Load vector, $\vec b$: 
+		  \[
+		    b_i = \int_\Omega \phi_i f \, d^2 x
+		  .\] 
+  \item Traction vector, $\vec t$:
+		  \[
+				  t_i = \int_{\Gamma_N} \phi_i g \, d\sigma
+		  .\] 
+\end{itemize}
+
+\subsection{Mass Matrix}
+
+For each entry we need to compute
+\[
+		M_{ij} = \int_\Omega \nabla \phi_i \nabla \phi_j \, d^2 x
+.\] 
+Using the fact that the $\phi_i$ are constructed from the $\varphi_j$:
+\[
+		M_{ij} = \sum_{\ell \in \mathcal S_i} \sum_{m \in \mathcal S_j}
+		\int_\Omega \nabla \varphi_{k_{\ell i}}^{(\ell)} \cdot 
+		\nabla \varphi_{k_{m j}}^{(m)} 
+		\mathbbm 1(\vec x \in K_\ell) \mathbbm 1(\vec x \in K_m) \, d^2 x
+.\] 
+Simplifying the indicator functions:
+\[
+		M_{ij} = \sum_{\substack{\ell \in \mathcal S_i \\ 
+		m \in \mathcal S_j}} \int_\Omega 
+		\nabla \varphi_{k_{\ell i}}^{(\ell)} \cdot 
+		\nabla \varphi_{k_{m j}}^{(m)} 
+		\mathbbm 1(\vec x \in K_\ell \cap K_m) \, d^2 x
+.\] 
+Thus $\ell = m$.  That is
+\[
+		M_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_\Omega \nabla \varphi_{k_{\ell i}}^{(\ell)} \cdot 
+		\nabla \varphi_{k_{\ell j}}^{(\ell)} \mathbbm 1(\vec x \in K_\ell) 
+		\, d^2 x = 
+		\sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_{K_\ell} \nabla \varphi_{k_{\ell i}}^{(\ell)} \cdot
+		\nabla \varphi_{k_{\ell j}}^{(\ell)} \, d^2 x
+.\] 
+Firstly, we need a method to compute $\mathcal S_i$.  
+This can be done using the lookup table of elements which 
+indicates which coordinates are a part of each element.  
+So given a node $\vec z_i$, find elements which contain $\vec z_i$
+as a vertex.  These are the elements of $\mathcal S_i$.  
+
+It should also be noted:
+\[
+		\nabla \varphi_p^{(\ell)}(\vec x) = 
+		\nabla \hat \varphi_p(\vec F^{-1}_\ell(\vec x)) = 
+		\left(B_\ell^{-1}\right)^T 
+		\hat \nabla \hat \varphi_p(\vec F^{-1}_\ell(\vec x))
+.\] 
+Therefore
+\[
+		M_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_{K_\ell} \left[\left(B_\ell^{-1}\right)^T 
+				\hat\nabla \hat\varphi_{k_{\ell i}}(\vec F_\ell^{-1}(\vec x))
+		\right] \cdot 
+		\left[\left(B_\ell^{-1}\right)^T
+				\hat\nabla \hat\varphi_{k_{\ell j}}(\vec F_\ell^{-1}(\vec x))
+		\right] \, d^2 x
+.\] 
+Finally, making the transformation
+\[
+		\vec x = \vec F_\ell(\hat{\vec x}) \implies 
+		d^2 x = |\det B_\ell| d^2 \hat x
+\] 
+simplifies the integral to become
+\[
+		M_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_{\hat K} \left[\left(B_\ell^{-1}\right)^T 
+				\hat\nabla \hat\varphi_{k_{\ell i}}(\hat{\vec x})
+				\right] \cdot \left[\left(B_\ell^{-1}\right)^T
+		\hat\nabla \hat\varphi_{k_{\ell j}}(\hat{\vec x}) \right] 
+		|\det B_\ell| \, d^2 \hat x
+.\] 
+For continuous piecewise linear functions, the integrand is a constant,
+giving
+\[
+		M_{ij} = |\hat K| \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		|\det B_\ell| \left(\hat\nabla \hat\varphi_{k_{\ell i}}\right)^T 
+		B_\ell^{-1} \left(B_\ell^{-1}\right)^T 
+		\hat\nabla \hat\varphi_{k_{\ell j}}
+.\] 
+\subsection{Stiffness Matrix}
+
+An analygous argument to that of the mass matrix will yield:
+\[
+		S_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_{K_\ell} \varphi_{k_{\ell i}}^{(\ell)} (\vec x) 
+		\varphi_{k_{\ell j}}^{(\ell)} (\vec x) \, d^2 x
+.\] 
+We can then substitute in terms of $\hat\varphi$ in the same way
+and get
+\[
+		S_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		\int_{\hat K} \hat\varphi_{k_{\ell i}}(\hat{\vec x}) 
+		\hat\varphi_{k_{\ell j}}(\hat{\vec x}) 
+		|\det B_\ell| \, d^2 \hat x = 
+		\sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		|\det B_\ell| \int_{\hat K} 
+		\hat\varphi_{k_{\ell i}}(\hat{\vec x}) 
+		\hat\varphi_{k_{\ell j}}(\hat{\vec x}) \, d^2 \hat x
+.\] 
+We can build a lookup table:
+\[
+		L_{mp} = \int_{\hat K} 
+		\hat\varphi_m(\hat{\vec x}) \hat\varphi_p(\hat{\vec x}) \, d^2 \hat x,
+		\quad m, p = 0, 1, 2
+.\] 
+Which requires only 6 unique integrals.  Then
+\[
+		S_{ij} = \sum_{\ell \in \mathcal S_i \cap \mathcal S_j} 
+		|\det B_\ell| L_{k_{\ell i} k_{\ell j}}
+.\] 
+
+\subsection{Load Vector}
+
+We can employ a cheat with the load vector.  
+First replace $f$ by its interpolant built out of the $\phi_i$:
+\[
+		I f := \sum_{i=0}^{N-1} f(\vec z_i) \phi_i
+.\] 
+Then
+\[
+		b_i = \sum_{j=0}^{N-1} f(\vec z_j) \int_\Omega \phi_i \phi_j \, 
+		d^2 x = 
+		(S \vec f)_i
+.\] 
+That is $\vec b = S \vec f$ where 
+$f_i = f(\vec z_i)$.
+While this is not exact, it drastically saves computational cost,
+and the method is only accurate to the first derivative anyway.
+
+\subsection{Traction Vector}
+
+For the construction of the traction vector, first 
+consider the set of indices $\mathcal S^{(N)}$ where 
+\[
+		\mathcal S^{(N)} := \{
+				0 \leq \ell \leq N - 1 : 
+		\vec z_\ell \in \Gamma_N\}
+.\] 
+We can further regard $\Gamma_N$ as a union of edges 
+$E^{(N)}_n$ where
+\[
+		E^{(N)}_n = \{\vec x = t \vec z_{\ell_{0, n}^{(N)}} + 
+		(1 - t) \vec z_{\ell_{1, n}^{(N)}} : 0 \leq t \leq 1\} \implies 
+		\Gamma_N = \bigcup_{n=0}^{N^{(N)} - 1} E^{(N)_n
+.\] 
+Here 
+the index $\ell_{i, n}^{(N)}$ for $i = 0, 1$ extracts the index so that 
+the Neumann edges are numbered counterclockwise.  
+Then the traction vector has the form
+\[
+		t_i = \sum_{n=0}^{N^{(N)} - 1} \int_{E_n^{(N)}} g \phi_i \, d\sigma
+.\] 
+However, it should be noted that for $t_i \neq 0$ we require 
+$i \in \mathcal S^{(N)}$.  Let us assume this is the case. 
+Then given a value for $i$, we can use the decomposition of $\phi_i$:
+\[
+		t_i = \sum_{n=0}^{N^{(N)}} \sum_{\ell \in \mathcal S_i} 
+		\int_{E_n^{(N)}} g \varphi_{k_{\ell i}}^{(\ell)} 
+		\mathbbm 1(\vec x \in K_\ell) \, d\sigma
+.\] 
+So for a non-zero contribution, we require 
+$\vec x \in E_n^{(N)} \cap K_\ell$.
+
+\newpage 
+
+On $\Gamma_D$ the values of $u$ are known.  
+Let $\mathcal I_D$ be the set of indices 
+indicating 
+\[
+  \ell \in \mathcal I_D \implies \vec z_\ell \in \Gamma_D
+.\] 
+Then the sum can be split to examine only the free indices:
+\[
+		\sum_{\substack{i = 0 \\ i \not\in \mathcal I_D}}^{N-1}
+		u_i \int_\Omega \nabla v \cdot \nabla \phi_i \, d^2 x + 
+		c \sum_{\substack{i = 0 \\ i \not\in \mathcal I_D}}^{N-1}
+		u_i \int_\Omega v \phi_i \, d^2 x = 
+		\int_\Omega v f \, d^2 x + \int_{\Gamma_N} v g \, d\sigma 
+		- \sum_{i \in \mathcal I_D} 
+		u_D(\vec z_i) \int_\Omega 
+.\] 
+\end{document}
