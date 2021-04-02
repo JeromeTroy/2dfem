@@ -184,6 +184,86 @@ class Mesh():
         # return useful tools for other purposes
         return midpoints, have_encountered
 
+    def blue_refine(self):
+        
+        # making a mokery of red_refine...
+        
+        # split each element into 4
+        new_num_elements = 4 * self.num_elements
+        new_elements = np.zeros([new_num_elements, 3])
+        
+        new_coordinates = list(np.copy(self.coordinates))
+        
+        indices = np.arange(3)
+        indices_to_lookup = np.zeros(
+            int(self.num_nodes ** 2)).astype(np.uint16)
+        
+        midpoint_indices = [0] * 3
+        
+        # standard output for refining boundaries
+        have_encountered = []
+        midpoints_mat = np.zeros([self.num_nodes, 
+                                  self.num_nodes]).astype(np.int)
+        
+        for el_num in range(self.num_elements):
+            
+            # where to look 
+            entries = list(zip(self.elements[el_num, indices], 
+                               self.elements[el_num, (indices + 1) % 3]))
+            where = [self.num_nodes * np.min(e) + np.max(e) - 1 for 
+                     e in entries]
+            
+            # midpoints for 01, 12, 20
+            midpoints = 0.5 * (
+                self.coordinates[self.elements[el_num, indices]] + 
+                self.coordinates[self.elements[el_num, (indices + 1) % 3]])
+            
+            # tack on additional nodes and note where to find them
+            for k in range(3):
+                if indices_to_lookup[where[k]] == 0:
+                    indices_to_lookup[where[k]] = len(new_coordinates)
+                    new_coordinates.append(midpoints[k, :])
+                    
+                    # store for output to other functions
+                    have_encountered.append([entries[k]])
+                    midpoints_mat[entries[k][0], 
+                                  entries[k][1]] = len(new_coordinates) - 1
+                
+                midpoint_indices[k] = indices_to_lookup[where[k]]
+                
+                    
+                
+            # assemble the elements
+            new_elements[4 * el_num, :] = np.array([
+                self.elements[el_num, 0], 
+                midpoint_indices[0], 
+                midpoint_indices[-1]])
+            new_elements[4 * el_num + 1, :] = np.array([
+                midpoint_indices[0],
+                self.elements[el_num, 1], 
+                midpoint_indices[1]])
+            new_elements[4 * el_num + 2, :] = np.array([
+                midpoint_indices[-1],
+                midpoint_indices[1],
+                self.elements[el_num, 2]])
+            new_elements[4 * el_num + 3, :] = np.array([
+                midpoint_indices[0],
+                midpoint_indices[1],
+                midpoint_indices[-1]])
+                
+            
+        # set everything
+        self.set_coordinates(np.array(new_coordinates))
+        self.set_elements(new_elements.astype(np.int))
+         
+        # this matrix must be symmetric
+        midpoints_mat += midpoints_mat.T
+        
+        return midpoints_mat, have_encountered
+            
+            
+            
+            
     def compute_barycenters(self):
         """
         Compute the barycenters for each element

@@ -9,11 +9,13 @@ discretization.  Requires mesh.py
 import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
+from scipy.sparse.linalg import spsolve
 import sympy as sm
 
 import mesh as msh
 
 x, y = sm.symbols("x y")
+b00, b01, b10, b11 = sm.symbols("a b c d")
 
 class P1FEMDiscretization():
     """
@@ -47,11 +49,23 @@ class P1FEMDiscretization():
         
         # the ij entry of this is integral of phi_i * phi_j on K-hat
         
+        self.template_matrix = sm.Matrix([[b00, b01], [b10, b11]])
         self.integral_phis = np.zeros([len(self.phi_hat), len(self.phi_hat)])
+        self.integral_grad_phis = []
         for i in range(len(self.phi_hat)):
             self.integral_phis[i, :] = [float(sm.integrate(
                 self.phi_hat[i] * phi, (y, 0, 1 - x), (x, 0, 1)))
                 for phi in self.phi_hat]
+            
+            fcts = [sm.Matrix(self.grad_phi_hat[i]).T * 
+                    self.template_matrix * self.template_matrix.T *
+                    sm.Matrix(phi) for phi in self.grad_phi_hat]
+            self.integral_grad_phis.append([
+                sm.integrate(f[0], (y, 0, 1 - x), (x, 0, 1))
+                for f in fcts])
+                        
+        self.integral_grad_phis = np.array(self.integral_grad_phis)
+            
             
         
         #self.__elements_to_list__()
@@ -202,19 +216,25 @@ class P1FEMDiscretization():
             resulting right hand side from matrix formulation.
 
         """
-        M_whole = self.assemble_mass_matrix()
-        S_whole = self.assemble_stiffness_matrix()
-        bf = self.assemble_load_vector(f)
-        tg = self.assemble_traction_vector(g)
+        self.assemble_matrices()
+        #self.assemble_mass_matrix()
+        #self.assemble_stiffness_matrix()
+        self.assemble_load_vector(f)
+        self.assemble_traction_vector(g)
         
         free, taken = self.__extract_free_indices__()
         
         dir_bc_vec = np.array(list(map(u_D, list(self.mesh.coordinates))))
         
         
-        A = M_whole[free, :][:, free] + c * S_whole[free, :][:, free]
-        b = bf[free] + tg[free] - \
-            (M_whole[free, :][:, taken] + c * S_whole[free, :][:, taken]) @ \
+        A = self.whole_stiffness_matrix[free, :][:, free] + \
+            c * self.whole_mass_matrix[free, :][:, free]
+            
+        
+        b = self.whole_load_vector[free] + \
+            self.whole_traction_vector[free] - \
+            (self.whole_stiffness_matrix[free, :][:, taken] + 
+             c * self.whole_mass_matrix[free, :][:, taken]) @ \
                 dir_bc_vec[taken]
                 
         return A, b
@@ -245,7 +265,7 @@ class P1FEMDiscretization():
         
         # solve
         if self.is_sparse:
-            res = sp.linalg.spsolve(A, b)
+            res = spsolve(A, b)
             
         else:
             res = np.linalg.solve(A, b)
@@ -303,6 +323,72 @@ class P1FEMDiscretization():
             
         return M
     
+    def assemble_matrices(self):
+        
+        B_inverses = self.mesh.affine_trans_mat_inverse()
+        det_B = self.mesh.affine_trans_det()
+        
+        data_mass = []
+        data_stiff = []
+        
+        rows = []
+        cols = []
+        
+        num_nodes = np.shape(self.mesh.coordinates)[0]
+        grid = np.zeros([num_nodes, num_nodes]) * np.nan
+        
+        for i in range(num_nodes):
+            supp = self.__collect_support__(i)
+            elements_to_consider = self.mesh.elements[supp, :]
+            
+            tmp = np.arange(self.mesh.num_elements)[supp]
+            
+            for element_num in range(len(elements_to_consider)):
+                element = elements_to_consider[element_num]
+                
+                element_index = tmp[element_num]
+                rel_index_i = np.where(element == i)[0][0]
+                for j in range(3):
+                    rows.append(i)
+                    cols.append(element[j])
+                    data_mass.append(self.integral_phis[rel_index_i, j] * 
+                                     det_B[element_index])
+                    data_stiff.append(float(self.integral_grad_phis[
+                        rel_index_i, j].subs([
+                            (b00, B_inverses[element_index, 0, 0]), 
+                            (b01, B_inverses[element_index, 0, 1]),
+                            (b10, B_inverses[element_index, 1, 0]),
+                            (b11, B_inverses[element_index, 1, 1])])) * 
+                            det_B[element_index])
+                
+        
+        M = sp.csr_matrix((data_mass, (rows, cols)), 
+                          shape=(num_nodes, num_nodes))
+        S = sp.csr_matrix((data_stiff, (rows, cols)), 
+                          shape=(num_nodes, num_nodes))
+        
+        # ensure symmetry
+        # M += M.T
+        # S += S.T
+        
+        if not self.is_sparse:
+            M = M.toarray()
+            S = S.toarray()
+            
+        self.whole_mass_matrix = M
+        self.whole_stiffness_matrix = S
+        
+        return M, S
+                        
+                        
+                        
+                        
+                    
+                        
+                    
+            
+            
+            
     def assemble_mass_matrix_sparse(self):
         """
         Assemble mass matrix (sparse version)
@@ -350,15 +436,20 @@ class P1FEMDiscretization():
                             self.mesh.elements[m, :] == j)[0][0]
                         
                         # build integrand
-                        integrand = np.dot(
-                            B_inverses[m, :, :].T @ 
-                                self.grad_phi_hat[relative_index_i, :], 
-                            B_inverses[m, :, :].T @ 
-                                self.grad_phi_hat[relative_index_j, :])
+                        # integrand = np.dot(
+                        #     B_inverses[m, :, :].T @ 
+                        #         self.grad_phi_hat[relative_index_i, :], 
+                        #     B_inverses[m, :, :].T @ 
+                        #         self.grad_phi_hat[relative_index_j, :])
+                        integrand = float(self.integral_grad_phis[
+                            relative_index_i,relative_index_j].subs([
+                                            (b00, B_inverses[m, 0, 0]),
+                                            (b01, B_inverses[m, 0, 1]),
+                                            (b10, B_inverses[m, 1, 0]),
+                                            (b11, B_inverses[m, 1, 1])]))
                         
                         # determine integral and add to entry
-                        val += self.K_hat_area * det_B[m] * \
-                            integrand
+                        val += det_B[m] * integrand
                             
                     if i == j:
                         # scaling with diagonals when applying symmetry
@@ -464,11 +555,11 @@ class P1FEMDiscretization():
         # recognizing the load vector is S @ f
         # where S is stiffness matrix
         # and f_i = f(z_i)
-        if self.whole_stiffness_matrix is None:
-            self.assemble_stiffness_matrix()
+        if self.whole_mass_matrix is None:
+            self.assemble_matrices()
             
         f_vec = np.array(list(map(f, list(self.mesh.coordinates))))
-        load_vec = self.whole_stiffness_matrix @ f_vec
+        load_vec = self.whole_mass_matrix @ f_vec
         
         self.whole_load_vector = load_vec
         
@@ -518,6 +609,8 @@ class P1FEMDiscretization():
             traction[second_node] += scaling * \
                 (g(first_coord) + 2 * g(second_coord)) / 6
                 
+        self.whole_traction_vector = traction
+                
         return traction
         
                 
@@ -530,7 +623,8 @@ class P1FEMDiscretization():
         """
 
         # refine mesh
-        midpoints, nodes_have_encountered = self.mesh.unif_refine()
+        #midpoints, nodes_have_encountered = self.mesh.unif_refine()
+        midpoints, nodes_have_encountered = self.mesh.blue_refine()
 
         # update boundary conditions
         new_dirichlet = np.zeros([2 * np.shape(self.dirichletbc)[0], 2])
@@ -676,21 +770,36 @@ if __name__ == "__main__":
     mesh = msh.Mesh(coords_fname="coordinates2.dat", 
                     elements_fname="elements2.dat")
     
-    # build the functions needed
-    x, y = sm.symbols("x y")
-    r = sm.sqrt(x**2 + y**2)
-    theta = sm.atan2(y, x) + 2 * sm.pi * sm.Piecewise((1, y < 0), (0, y >= 0))
+    mesh.plot_mesh(show_indices=True)
     
-    step_r = sm.Piecewise((1, r < 1), (0, r >= 1))
+    r, t, b = sm.symbols("r t b")
     
+    step_r = sm.Piecewise((1, r <= 1), (0, r > 1))
+    
+    theta = sm.atan2(y, x) + sm.Piecewise((2 * sm.pi, y < 0), (0, y >=0 ))
     beta = 2. / 3
-    f_sm = 4 * (beta + 1) * r**beta * sm.sin(beta * theta) * step_r
-    f = sm.lambdify([(x, y)], f_sm)
     
     
-    u_D_sm = (1 - r**2) * r**beta * sm.sin(beta * theta) * step_r
+    u_D_full_sm = (1 - r**2) * r**b * sm.sin(b * t)
+    f_full_sm = sm.diff(r * sm.diff(u_D_full_sm, r), r) / r + \
+        sm.diff(u_D_full_sm, (t, 2)) / r**2
+    
+    u_D_full_sm = u_D_full_sm.subs(b, beta).simplify()
+    f_full_sm = f_full_sm.subs(b, beta).simplify()
+    
+    u_D_sm = u_D_full_sm * step_r
+    f_sm = f_full_sm * step_r
+    print(f_full_sm)
+    
+    u_D_sm = u_D_sm.subs(r, sm.sqrt(x**2 + y**2))
+    f_sm = f_sm.subs(r, sm.sqrt(x**2 + y**2))
+    
+    u_D_sm = u_D_sm.subs(t, theta).simplify()
+    f_sm = f_sm.subs(t, theta).simplify()
+    
+    print(u_D_sm)
     u_D = sm.lambdify([(x, y)], u_D_sm)
-        
+    f = sm.lambdify([(x, y)], -f_sm)
     g = lambda x: 0
     
     c = 0
@@ -699,40 +808,68 @@ if __name__ == "__main__":
     disc1 = P1FEMDiscretization(mesh=mesh)
     
     dirichlet_edges = np.array([
+        [0, 1],
         [1, 4],
-        [4, 9],
-        [9, 10],
-        [10, 11],
-        [11, 6], 
-        [6, 5], 
-        [5, 2], 
-        [2, 1]])
-    dirichlet_edges -= 1
+        [4, 5],
+        [5, 10], 
+        [10, 9],
+        [9, 8],
+        [8, 3],
+        [3, 0]])
+    # dirichlet_edges -= 1
     neumann_edges = np.array([])
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    start = time.time()
-    for j in range(2):
+    for time in range(5):
         disc1.unif_refine()
     
-    stop = time.time()
-    print(stop - start)
+    M, S = disc1.assemble_matrices()
+    print(24 * M.toarray())
+    print(S.toarray())
+    
+    
+    
+    
+    
+    
+    
+    
     #disc1.plot_mesh(show_indices=True)
     
+    # f = lambda x: 1
+    # u_D = lambda x: 0
+    # g = lambda x: 0
+    # c = 0
+    u_sol = disc1.solve(c, f, g, u_D)
     
-    start = time.time()
-    sol_vec = disc1.solve(c, f, g, u_D)
-    stop = time.time()
-    print(stop - start)
+            
+    
+    
+                    
+    
+    # for j in range(1):
+    #     start = time.time()
+    #     disc1.unif_refine()
+    #     stop = time.time()
+    #     print("refine no. ", j, "time: ", stop - start)
+    
+    
+    # disc1.plot_mesh(show_indices=False)
+    
+    
+    # start = time.time()
+    # sol_vec = disc1.solve(c, f, g, u_D)
+    # stop = time.time()
+    # print(stop - start)
     
     from mpl_toolkits.mplot3d import Axes3D    
     
     fig = plt.figure()
     ax = fig.gca(projection='3d')
     collec = ax.plot_trisurf(disc1.mesh.coordinates[:, 0], 
-                             disc1.mesh.coordinates[:, 1], sol_vec, 
-                             linewidth=0.2)
-    ax.view_init(30, 10)
+                              disc1.mesh.coordinates[:, 1], u_sol, 
+                              linewidth=0.2)
+    ax.view_init(30, 250)
     cbar = fig.colorbar(collec)
     
