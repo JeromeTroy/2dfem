@@ -301,27 +301,6 @@ class P1FEMDiscretization():
         u_whole[free] = u_free
         
         return u_whole  
-        
-        
-    def assemble_mass_matrix(self):
-        """
-        Assemble mass matrix - wrapper deals with sparsity
-
-        Returns
-        -------
-        M : N x N matrix (possible sparse)
-            Mass matrix for system.
-
-        """
-        
-        M = self.assemble_mass_matrix_sparse()
-        
-        if not self.is_sparse:
-            M = M.toarray()
-            
-        self.mass_matrix = M
-            
-        return M
     
     def assemble_matrices(self):
         
@@ -335,7 +314,6 @@ class P1FEMDiscretization():
         cols = []
         
         num_nodes = np.shape(self.mesh.coordinates)[0]
-        grid = np.zeros([num_nodes, num_nodes]) * np.nan
         
         for i in range(num_nodes):
             supp = self.__collect_support__(i)
@@ -379,163 +357,6 @@ class P1FEMDiscretization():
         self.whole_stiffness_matrix = S
         
         return M, S
-                        
-                        
-                        
-                        
-                    
-                        
-                    
-            
-            
-            
-    def assemble_mass_matrix_sparse(self):
-        """
-        Assemble mass matrix (sparse version)
-
-        Returns
-        -------
-        mass_matrix : N x N sparse matrix
-            mass matrix for the system.
-
-        """
-        # details on affine transformations hold on to these
-        B_inverses = self.mesh.affine_trans_mat_inverse()
-        det_B = self.mesh.affine_trans_det()
-        
-        N = np.shape(self.mesh.coordinates)[0]
-        
-        data = []
-        rows = []
-        cols = []
-        
-        # collect data
-        # element by element
-        for i in range(N):
-            for j in range(i, N):
-                
-                # for two nodes, where do their basis functions overlap in 
-                # support
-                if i == j:
-                    elements_list = self.__collect_support__(i)
-                    elements = np.arange(self.mesh.num_elements)[elements_list]
-                else:
-                    elements_list = self.__collect_support_overlap__(i, j)
-                    elements = np.arange(self.mesh.num_elements)[elements_list]
-                    
-                # for each element, perform integration
-                if len(elements) > 0:
-                    val = 0
-                    rows.append(i)
-                    cols.append(j)
-                    for m in elements:
-                        # which phi_i are we using
-                        relative_index_i = np.where(
-                            self.mesh.elements[m, :] == i)[0][0]
-                        relative_index_j = np.where(
-                            self.mesh.elements[m, :] == j)[0][0]
-                        
-                        # build integrand
-                        # integrand = np.dot(
-                        #     B_inverses[m, :, :].T @ 
-                        #         self.grad_phi_hat[relative_index_i, :], 
-                        #     B_inverses[m, :, :].T @ 
-                        #         self.grad_phi_hat[relative_index_j, :])
-                        integrand = float(self.integral_grad_phis[
-                            relative_index_i,relative_index_j].subs([
-                                            (b00, B_inverses[m, 0, 0]),
-                                            (b01, B_inverses[m, 0, 1]),
-                                            (b10, B_inverses[m, 1, 0]),
-                                            (b11, B_inverses[m, 1, 1])]))
-                        
-                        # determine integral and add to entry
-                        val += det_B[m] * integrand
-                            
-                    if i == j:
-                        # scaling with diagonals when applying symmetry
-                        val /= 2 
-                        
-                    data.append(float(val))
-        
-        # build sparse matrix
-        mass_matrix = sp.csr_matrix((data, (rows, cols)), shape=[N, N])  
-        # ensure is symmetric
-        mass_matrix = mass_matrix + mass_matrix.T
-                        
-        self.whole_mass_matrix = mass_matrix
-        return mass_matrix
-                
-
-
-    def assemble_stiffness_matrix_sparse(self):
-        """
-        Assemble stiffness matrix - sparse version
-
-        Returns
-        -------
-        stiffness_matrix : N x N sparse matrix
-            stiffness matrix.
-
-        """
-        det_B = self.mesh.affine_trans_det()
-        
-        N = np.shape(self.mesh.coordinates)[0]
-        data = []
-        rows = []
-        cols = []
-        
-        for i in range(N):
-            for j in range(i, N):
-                
-                if i == j:
-                    elements_list = self.__collect_support__(i)
-                    elements = np.arange(self.mesh.num_elements)[elements_list]
-                else:
-                    elements_list = self.__collect_support_overlap__(i, j)
-                    elements = np.arange(self.mesh.num_elements)[elements_list]
-                
-                if len(elements) > 0:
-                    val = 0
-                    rows.append(i)
-                    cols.append(j)
-                    for m in elements:
-                        # which phi_i are we using
-                        relative_index_i = np.where(self.mesh.elements[m, :] == i)[0][0]
-                        relative_index_j = np.where(self.mesh.elements[m, :] == j)[0][0]
-                        
-                        # integration is already done, use lookup table
-                        val += det_B[m] * \
-                            self.integral_phis[relative_index_i, relative_index_j]
-                            
-                    if i == j:
-                        # scaling for applying symmetry
-                        val /= 2
-                    data.append(val)
-        
-        # build stiffness matrix and ensure symmetry
-        stiffness_matrix = sp.csr_matrix((data, (rows, cols)), shape=(N, N))
-        stiffness_matrix = stiffness_matrix + stiffness_matrix.T
-        self.whole_stiffness_matrix = stiffness_matrix
-        
-        return stiffness_matrix
-    
-    def assemble_stiffness_matrix(self):
-        """
-        Wrapper deals with sparsity
-
-        Returns
-        -------
-        stiffness_matrix : N x N matrix (possibly sparse0)
-            stiffness matrix.
-
-        """
-        stiffness_matrix = self.assemble_stiffness_matrix_sparse()
-        
-        if not self.is_sparse:
-            stiffness_matrix = stiffness_matrix.toarray()
-            
-        self.whole_stiffness_matrix = stiffness_matrix
-        return stiffness_matrix
         
     def assemble_load_vector(self, f):
         """
