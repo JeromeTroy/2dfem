@@ -64,7 +64,12 @@ class P1FEMDiscretization():
                 sm.integrate(f[0], (y, 0, 1 - x), (x, 0, 1))
                 for f in fcts])
                         
-        self.integral_grad_phis = np.array(self.integral_grad_phis)
+        
+        self.integral_grad_phis = sm.lambdify([[b00, b01, b10, b11]],
+                                            np.array(self.integral_grad_phis))
+        #fcts = [sm.lambdify([b00, b01, b10, b11], f) 
+        #        for f in self.integral_grad_phis.ravel()]
+        #self.integral_grad_phis = np.reshape(np.array(fcts), (3, 3))
             
             
         
@@ -301,53 +306,49 @@ class P1FEMDiscretization():
         u_whole[free] = u_free
         
         return u_whole  
+       
     
     def assemble_matrices(self):
+        """
+        Build the mass and stiffness matrices
+
+        Returns
+        -------
+        M : N x N matrix (possibly sparse)
+            Mass matrix.
+        S : N x N matrix (possibly sparse)
+            Stiffness matrix.
+
+        """
         
+        # data about the mesh, converted to format for quick computations
         B_inverses = self.mesh.affine_trans_mat_inverse()
+        B_inverses_list = list(map(lambda x: x.ravel(), list(B_inverses)))
         det_B = self.mesh.affine_trans_det()
         
-        data_mass = []
-        data_stiff = []
+        # the data
+        data_mass = list(map(lambda x: self.integral_phis * x, list(det_B)))
+        data_stiff = list(map(lambda x:
+                              np.array(self.integral_grad_phis(x[0])) * x[1], 
+                              zip(B_inverses_list, list(det_B))))
         
-        rows = []
-        cols = []
+        # where it will go
+        tmp_zip = list(map(lambda x: np.meshgrid(x, x), 
+                           list(self.mesh.elements)))
+        rows_mat, cols_mat = zip(*tmp_zip)
         
-        num_nodes = np.shape(self.mesh.coordinates)[0]
+        # put into nice format
+        data_mass = np.array(data_mass).ravel()
+        data_stiff = np.array(data_stiff).ravel()
+        rows = np.array(rows_mat).ravel()
+        cols = np.array(cols_mat).ravel()
         
-        for i in range(num_nodes):
-            supp = self.__collect_support__(i)
-            elements_to_consider = self.mesh.elements[supp, :]
-            
-            tmp = np.arange(self.mesh.num_elements)[supp]
-            
-            for element_num in range(len(elements_to_consider)):
-                element = elements_to_consider[element_num]
-                
-                element_index = tmp[element_num]
-                rel_index_i = np.where(element == i)[0][0]
-                for j in range(3):
-                    rows.append(i)
-                    cols.append(element[j])
-                    data_mass.append(self.integral_phis[rel_index_i, j] * 
-                                     det_B[element_index])
-                    data_stiff.append(float(self.integral_grad_phis[
-                        rel_index_i, j].subs([
-                            (b00, B_inverses[element_index, 0, 0]), 
-                            (b01, B_inverses[element_index, 0, 1]),
-                            (b10, B_inverses[element_index, 1, 0]),
-                            (b11, B_inverses[element_index, 1, 1])])) * 
-                            det_B[element_index])
-                
         
+        # assemble matrices
         M = sp.csr_matrix((data_mass, (rows, cols)), 
-                          shape=(num_nodes, num_nodes))
+                          shape=(self.mesh.num_nodes, self.mesh.num_nodes))
         S = sp.csr_matrix((data_stiff, (rows, cols)), 
-                          shape=(num_nodes, num_nodes))
-        
-        # ensure symmetry
-        # M += M.T
-        # S += S.T
+                          shape=(self.mesh.num_nodes, self.mesh.num_nodes))
         
         if not self.is_sparse:
             M = M.toarray()
@@ -408,9 +409,7 @@ class P1FEMDiscretization():
         for edge_num in range(Nn):
             
             # what elements touch this edge there is only 1
-            needed_element = self.__find_elements_containing_edge__(edge_num)
             # extract the element
-            element = needed_element[0]
             
             # relative indices of edge nodes indicate that of phi
             first_node = self.neumannbc[edge_num, 0]
@@ -593,6 +592,7 @@ if __name__ == "__main__":
     
     mesh.plot_mesh(show_indices=True)
     
+    start = time.time()
     r, t, b = sm.symbols("r t b")
     
     step_r = sm.Piecewise((1, r <= 1), (0, r > 1))
@@ -610,7 +610,7 @@ if __name__ == "__main__":
     
     u_D_sm = u_D_full_sm * step_r
     f_sm = f_full_sm * step_r
-    print(f_full_sm)
+    #print(f_full_sm)
     
     u_D_sm = u_D_sm.subs(r, sm.sqrt(x**2 + y**2))
     f_sm = f_sm.subs(r, sm.sqrt(x**2 + y**2))
@@ -618,10 +618,14 @@ if __name__ == "__main__":
     u_D_sm = u_D_sm.subs(t, theta).simplify()
     f_sm = f_sm.subs(t, theta).simplify()
     
-    print(u_D_sm)
+    #print(u_D_sm)
     u_D = sm.lambdify([(x, y)], u_D_sm)
     f = sm.lambdify([(x, y)], -f_sm)
     g = lambda x: 0
+    
+    stop = time.time()
+    
+    print("Functions computed, time: ", stop - start)
     
     c = 0
     
@@ -642,47 +646,26 @@ if __name__ == "__main__":
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    for time in range(5):
+    start = time.time()
+    for alpha in range(5):
         disc1.unif_refine()
+    stop = time.time()
     
+    print("Refinement completed, time: ", stop - start)
+    
+    start = time.time()
     M, S = disc1.assemble_matrices()
-    print(24 * M.toarray())
-    print(S.toarray())
-    
-    
-    
-    
-    
-    
-    
+    stop = time.time()
+    print("Matrices assembled, time: ", stop - start)
+
     
     #disc1.plot_mesh(show_indices=True)
     
-    # f = lambda x: 1
-    # u_D = lambda x: 0
-    # g = lambda x: 0
-    # c = 0
+    start = time.time()
     u_sol = disc1.solve(c, f, g, u_D)
+    stop = time.time()
+    print("Solution computed, time: ", stop - start)
     
-            
-    
-    
-                    
-    
-    # for j in range(1):
-    #     start = time.time()
-    #     disc1.unif_refine()
-    #     stop = time.time()
-    #     print("refine no. ", j, "time: ", stop - start)
-    
-    
-    # disc1.plot_mesh(show_indices=False)
-    
-    
-    # start = time.time()
-    # sol_vec = disc1.solve(c, f, g, u_D)
-    # stop = time.time()
-    # print(stop - start)
     
     from mpl_toolkits.mplot3d import Axes3D    
     
