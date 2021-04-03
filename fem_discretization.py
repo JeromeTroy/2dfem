@@ -324,7 +324,7 @@ class P1FEMDiscretization():
         # data about the mesh, converted to format for quick computations
         B_inverses = self.mesh.affine_trans_mat_inverse()
         B_inverses_list = list(map(lambda x: x.ravel(), list(B_inverses)))
-        det_B = self.mesh.affine_trans_det()
+        det_B = np.abs(self.mesh.affine_trans_det())
         
         # the data
         data_mass = list(map(lambda x: self.integral_phis * x, list(det_B)))
@@ -470,7 +470,33 @@ class P1FEMDiscretization():
         self.set_boundaries(new_dirichlet.astype(np.int), 
                             new_neumann.astype(np.int))
 
+    
+    def error_approx(self, u_sol, u_true):
+        
+        z0, z1 = sm.symbols('z0, z1')
+        
+        first_l2 = np.dot(u_sol, self.whole_mass_matrix @ u_sol)
+        
+        u_squared = u_true(self.template_matrix * sm.Matrix(x, y) + 
+                      sm.Matrix([z0, z1]))
+        u_l2 = sm.integrate(u_squared, (y, 0, 1 - x), (x, 0, 1))
+        u_l2_fun = sm.lambdify([b00, b01, b10, b11, z0, z1], u_l2)
+        # TODO: apply to vectorized elements / coordinates
+        
+        # TODO: build middle term u * phi
+        # TOOD: H1 error
+        # vectorized values at coordinates
+        u_true_vec = np.array(list(map(u_true, list(self.mesh.coordinates))))
 
+        difference = u_sol - u_true_vec
+        
+        l2_error = np.dot(difference, 
+                          self.whole_mass_matrix @ difference)
+        h1_error = l2_error + np.dot(difference, 
+                                     self.whole_stiffness_matrix @ difference)
+        
+        return h1_error, l2_error
+    
     def neumann_edge_lengths(self):
         """
         Compute lengths of neumann edges for boundaries
@@ -590,12 +616,16 @@ if __name__ == "__main__":
     mesh = msh.Mesh(coords_fname="coordinates2.dat", 
                     elements_fname="elements2.dat")
     
+    num_refine = 6
+    l2_errors = np.zeros(num_refine + 1)
+    h1_errors = np.zeros(num_refine + 1)
+    
     mesh.plot_mesh(show_indices=True)
     
     start = time.time()
     r, t, b = sm.symbols("r t b")
     
-    step_r = sm.Piecewise((1, r <= 1), (0, r > 1))
+    step_r = sm.Piecewise((1, x**2 + y**2 < 1), (0, x**2 + y**2 >= 1))
     
     theta = sm.atan2(y, x) + sm.Piecewise((2 * sm.pi, y < 0), (0, y >=0 ))
     beta = 2. / 3
@@ -608,19 +638,16 @@ if __name__ == "__main__":
     u_D_full_sm = u_D_full_sm.subs(b, beta).simplify()
     f_full_sm = f_full_sm.subs(b, beta).simplify()
     
-    u_D_sm = u_D_full_sm * step_r
-    f_sm = f_full_sm * step_r
-    #print(f_full_sm)
+    u_D_full_sm = u_D_full_sm.subs(r, sm.sqrt(x**2 + y**2))
+    f_full_sm = f_full_sm.subs(r, sm.sqrt(x**2 + y**2))
     
-    u_D_sm = u_D_sm.subs(r, sm.sqrt(x**2 + y**2))
-    f_sm = f_sm.subs(r, sm.sqrt(x**2 + y**2))
-    
-    u_D_sm = u_D_sm.subs(t, theta).simplify()
-    f_sm = f_sm.subs(t, theta).simplify()
+    u_D_full_sm = u_D_full_sm.subs(t, theta).simplify()
+    f_full_sm = f_full_sm.subs(t, theta).simplify()
     
     #print(u_D_sm)
-    u_D = sm.lambdify([(x, y)], u_D_sm)
-    f = sm.lambdify([(x, y)], -f_sm)
+    u_D = sm.lambdify([(x, y)], u_D_full_sm)
+    f = sm.lambdify([(x, y)], -f_full_sm)
+    
     g = lambda x: 0
     
     stop = time.time()
@@ -646,34 +673,35 @@ if __name__ == "__main__":
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    start = time.time()
-    for alpha in range(5):
-        disc1.unif_refine()
-    stop = time.time()
-    
-    print("Refinement completed, time: ", stop - start)
-    
-    start = time.time()
-    M, S = disc1.assemble_matrices()
-    stop = time.time()
-    print("Matrices assembled, time: ", stop - start)
-
-    
-    #disc1.plot_mesh(show_indices=True)
-    
-    start = time.time()
     u_sol = disc1.solve(c, f, g, u_D)
-    stop = time.time()
-    print("Solution computed, time: ", stop - start)
     
+    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D)
+    
+    for alpha in range(num_refine):
+        print("refine no. ", alpha + 1)
+        disc1.unif_refine()
+        
+        u_sol = disc1.solve(c, f, g, u_D)
+        l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
+                                                                        u_D)
+    
+    l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
+    h1_order = np.log2(h1_errors[:-1] / h1_errors[1:])
+    
+    print("L2 errors: ", l2_errors)
+    print("L2 orders: ", l2_order)
+    print("H1 errors: ", h1_errors)
+    print("H1 orders: ", h1_order)
     
     from mpl_toolkits.mplot3d import Axes3D    
     
     fig = plt.figure()
+    cmap = plt.get_cmap('viridis')
     ax = fig.gca(projection='3d')
     collec = ax.plot_trisurf(disc1.mesh.coordinates[:, 0], 
                               disc1.mesh.coordinates[:, 1], u_sol, 
-                              linewidth=0.2)
-    ax.view_init(30, 250)
+                              linewidth=0.2, antialiased = True,
+                              edgecolor = 'grey', cmap=cmap)
+    ax.view_init(90, 0)
     cbar = fig.colorbar(collec)
     
