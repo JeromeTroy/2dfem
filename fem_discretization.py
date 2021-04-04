@@ -445,6 +445,7 @@ class P1FEMDiscretization():
         # refine mesh
         #midpoints, nodes_have_encountered = self.mesh.unif_refine()
         midpoints, nodes_have_encountered = self.mesh.blue_refine()
+        #midpoints, nodes_have_encountered = self.mesh.pink_refine()
 
         # update boundary conditions
         new_dirichlet = np.zeros([2 * np.shape(self.dirichletbc)[0], 2])
@@ -470,6 +471,63 @@ class P1FEMDiscretization():
         self.set_boundaries(new_dirichlet.astype(np.int), 
                             new_neumann.astype(np.int))
 
+    def refine_edges(self, edges, midpoints):
+        """
+        Helper function to refine boundaries
+
+        Parameters
+        ----------
+        edges : N x 2 array
+            edges in question.
+        midpoints : N x N sparse array
+            indicates where each midpoint is indexed.
+
+        Returns
+        -------
+        new_edges : 2 N x 2 array
+            new boundary edges after refinement.
+
+        """
+        if len(edges) == 0:
+            return np.array([])
+        else:
+            new_edges = np.zeros([2 * len(edges), 2]).astype(np.int)
+            
+            new_edges[::2, 0] = edges[:, 0]
+            new_edges[1::2, 1] = edges[:, 1]
+            
+            new_edge_indices = [midpoints[e[0], e[1]] 
+                                     for e in list(edges)]
+            new_edges[1::2, 0] = np.array(new_edge_indices)
+            new_edges[::2, 1] = np.array(new_edge_indices)
+            
+            return new_edges
+    
+    def blue_refine(self, memory_intensive=False):
+        """
+        A faster uniform refinement
+
+        Parameters
+        ----------
+        memory_intensive : boolean
+            indicates if mesh is high resolution and will 
+            require a lot of memory
+            If this is True, relies on the slower pink_refine.
+            The default is False
+        Returns
+        -------
+        None.
+
+        """
+        if memory_intensive:
+            midpoints, have_encountered = self.mesh.pink_refine()
+        else:
+            midpoints, have_encountered = self.mesh.blue_refine()
+            
+        self.dirichletbc = self.refine_edges(self.dirichletbc, midpoints)
+        self.neumannbc = self.refine_edges(self.neumannbc, midpoints)
+        
+                                
     
     def error_approx(self, u_sol, u_true):
         
@@ -616,7 +674,7 @@ if __name__ == "__main__":
     mesh = msh.Mesh(coords_fname="coordinates2.dat", 
                     elements_fname="elements2.dat")
     
-    num_refine = 6
+    num_refine = 8
     l2_errors = np.zeros(num_refine + 1)
     h1_errors = np.zeros(num_refine + 1)
     
@@ -673,35 +731,36 @@ if __name__ == "__main__":
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    u_sol = disc1.solve(c, f, g, u_D)
+    #u_sol = disc1.solve(c, f, g, u_D)
     
-    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D)
+    #l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D)
     
     for alpha in range(num_refine):
         print("refine no. ", alpha + 1)
-        disc1.unif_refine()
+        disc1.blue_refine(memory_intensive=True)
         
-        u_sol = disc1.solve(c, f, g, u_D)
-        l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
-                                                                        u_D)
+        #u_sol = disc1.solve(c, f, g, u_D)
+        #l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
+        #                                                                u_D)
     
-    l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
-    h1_order = np.log2(h1_errors[:-1] / h1_errors[1:])
+    #disc1.plot_mesh()
+    # l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
+    # h1_order = np.log2(h1_errors[:-1] / h1_errors[1:])
     
-    print("L2 errors: ", l2_errors)
-    print("L2 orders: ", l2_order)
-    print("H1 errors: ", h1_errors)
-    print("H1 orders: ", h1_order)
+    # print("L2 errors: ", l2_errors)
+    # print("L2 orders: ", l2_order)
+    # print("H1 errors: ", h1_errors)
+    # print("H1 orders: ", h1_order)
     
-    from mpl_toolkits.mplot3d import Axes3D    
+    # from mpl_toolkits.mplot3d import Axes3D    
     
-    fig = plt.figure()
-    cmap = plt.get_cmap('viridis')
-    ax = fig.gca(projection='3d')
-    collec = ax.plot_trisurf(disc1.mesh.coordinates[:, 0], 
-                              disc1.mesh.coordinates[:, 1], u_sol, 
-                              linewidth=0.2, antialiased = True,
-                              edgecolor = 'grey', cmap=cmap)
-    ax.view_init(90, 0)
-    cbar = fig.colorbar(collec)
+    # fig = plt.figure()
+    # cmap = plt.get_cmap('viridis')
+    # ax = fig.gca(projection='3d')
+    # collec = ax.plot_trisurf(disc1.mesh.coordinates[:, 0], 
+    #                           disc1.mesh.coordinates[:, 1], u_sol, 
+    #                           linewidth=0.2, antialiased = True,
+    #                           edgecolor = 'grey', cmap=cmap)
+    # ax.view_init(90, 0)
+    # cbar = fig.colorbar(collec)
     

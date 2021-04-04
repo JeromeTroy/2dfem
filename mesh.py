@@ -8,6 +8,7 @@ triangles.  Currently only designed for 2D domains
 """
 
 import numpy as np
+from scipy.sparse import csr_matrix
 import matplotlib.pyplot as plt
 
 
@@ -59,6 +60,33 @@ class Mesh():
     def get_elements(self):
         return self.elements
 
+    def get_unique_edges(self):
+        """
+        Extract unique edges of a mesh
+
+        Returns
+        -------
+        unique_edges : list of 2-tuples
+            list of unique edges.
+
+        """
+        # get all edges
+        n = self.num_nodes
+        first_edges = np.sort(self.elements[:, (0, 1)], axis=1)
+        second_edges = np.sort(self.elements[:, (1, 2)], axis=1)
+        third_edges = np.sort(self.elements[:, (0, -1)], axis=1)
+        
+        all_edges = list(first_edges) + \
+            list(second_edges) + list(third_edges)
+            
+        rows, cols = zip(*all_edges)
+        edges_mat = csr_matrix((np.ones(len(rows)), (rows, cols)), 
+                               shape=(n, n))
+        
+        unique_edges = list(zip(*edges_mat.nonzero()))
+        return unique_edges
+            
+        
     def load_coordinates_from_file(self, coord_fname):
         """
         Load coordinates from given file
@@ -185,8 +213,17 @@ class Mesh():
         return midpoints, have_encountered
 
     def blue_refine(self):
-        
-        # making a mokery of red_refine...
+        """
+        A faster uniform refinement
+
+        Returns
+        -------
+        midpoints_mat : N x N sparse matrix
+            matrix indicating positions of each midpoint in new coordinates.
+        have_encountered : N long list
+            list of edges encountered.
+
+        """
         
         # split each element into 4
         new_num_elements = 4 * self.num_elements
@@ -261,8 +298,85 @@ class Mesh():
         
         return midpoints_mat, have_encountered
             
-            
-            
+    def pluck_new_element(self, element, new_indices):
+        """
+        Helper function for pink refine
+        split an element into 4 others
+
+        Parameters
+        ----------
+        element : 1 x 3 array
+            element in question.
+        new_indices : N x N sparse array
+            indices of each midpoint.
+
+        Returns
+        -------
+        new_elements : 4 x 3 array
+            new elements.
+
+        """
+        new_elements = [
+            [element[0], new_indices[element[0], element[1]], 
+             new_indices[element[0], element[2]]], 
+            [new_indices[element[0], element[1]], element[1], 
+             new_indices[element[1], element[2]]], 
+            [new_indices[element[0], element[2]], 
+             new_indices[element[1], element[2]], element[2]],
+            [new_indices[element[0], element[1]], 
+             new_indices[element[1], element[2]], 
+             new_indices[element[0], element[2]]]
+        ]
+        return new_elements
+        
+    def pink_refine(self):
+        """
+        A slower version of blue refine without loops, but which
+        allows for higher degrees of mesh refinement
+
+        Returns
+        -------
+        midpoints_indices : N x N sparse array
+            table of midpoints indices.
+        have_encountered : N long list
+            list of edges encountered.
+
+        """
+        have_encountered = self.get_unique_edges()
+        unique_edges = np.array(have_encountered)
+        
+        midpoints = 0.5 * (self.coordinates[unique_edges[:, 0], :] + 
+                           self.coordinates[unique_edges[:, 1], :])
+        
+        new_coordinates = np.array(list(self.coordinates) + 
+                                   list(midpoints))
+        
+        indices = np.arange(len(midpoints)) + self.num_nodes
+        rows, cols = list(zip(*unique_edges))
+        midpoints_indices = csr_matrix((indices, (rows, cols)), 
+                                       shape=(self.num_nodes, self.num_nodes))
+        
+        midpoints_indices += midpoints_indices.T
+                
+        
+        new_elements = list(map(
+            lambda el: np.array(self.pluck_new_element(el, midpoints_indices)), 
+            list(self.elements)))
+        new_elements = np.concatenate(new_elements)
+        
+        
+        self.num_nodes += len(have_encountered)
+        self.num_elements *= 4
+        self.elements = new_elements
+        self.coordinates = new_coordinates
+        
+        
+        return midpoints_indices, have_encountered
+        
+        
+        
+        
+        
             
     def compute_barycenters(self):
         """
@@ -444,4 +558,25 @@ class Mesh():
                              fontsize=15, color="blue")
         return fig, ax
 
+if __name__ == "__main__":
+    
+    import time
+    
+    coordinates = np.array([
+        [0, 0],
+        [1, 0],
+        [0, 1]])
+    elements = np.array([[0, 1, 2]])
+    
+    mesh = Mesh(coordinates=coordinates, elements=elements)
+    
+    num_refine = 8
+    start = time.time()
+    for j in range(num_refine):
+        mesh.pink_refine()
+    
+    stop = time.time()
+    print("time: ",stop - start)
+    #mesh.plot_mesh()
+    
 
