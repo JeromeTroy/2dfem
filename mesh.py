@@ -41,6 +41,7 @@ class Mesh():
         
         self.det_B_vals = None
         self.B_inverses = None
+        self.B_matrices = None
 
 
     def set_coordinates(self, coordinates):
@@ -394,20 +395,25 @@ class Mesh():
     
     def compute_affine_transformation_matrices(self):
         
-        # tensor where matrices[i, :, :] is a 2 x 2 matrix
-        matrices = np.zeros([np.shape(self.elements)[0], 2, 2])
+        if self.B_matrices is not None:
+            return self.B_matrices 
         
-        # assign each entry for all matrices simultaneously
-        for n in range(2):
-            # column 1
-            matrices[:, n, 0] = self.coordinates[self.elements[:, 1], n] - \
-                self.coordinates[self.elements[:, 0], n]
-                
-            # column 2
-            matrices[:, n, 1] = self.coordinates[self.elements[:, 2], n] - \
-                self.coordinates[self.elements[:, 0], n]
-                
-        return matrices           
+        else:
+            # tensor where matrices[i, :, :] is a 2 x 2 matrix
+            matrices = np.zeros([np.shape(self.elements)[0], 2, 2])
+            
+            # assign each entry for all matrices simultaneously
+            for n in range(2):
+                # column 1
+                matrices[:, n, 0] = self.coordinates[self.elements[:, 1], n] - \
+                    self.coordinates[self.elements[:, 0], n]
+                    
+                # column 2
+                matrices[:, n, 1] = self.coordinates[self.elements[:, 2], n] - \
+                    self.coordinates[self.elements[:, 0], n]
+            self.B_matrices = matrices
+                    
+            return matrices           
         
 
     def affine_trans_det(self):
