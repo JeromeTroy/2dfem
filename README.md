@@ -7,10 +7,10 @@ $$
   -\nabla^2 u + c u = f, \quad x \in \Omega
 $$
 $$
-  \left. u \right|_{x \in \Gamma_D} = u_D
+  u = u_D, \quad x \in \Gamma_D
 $$
 $$
-  \left.\frac{\partial u}{\partial n}\right|_{x \in \Gamma_N} = g
+  \frac{\partial u}{\partial n} = g, \quad x \in \Gamma_N
 $$
 
 See the docs folder for formal documentation on how the solution is computed.
