@@ -5,9 +5,11 @@
 Given a polygonal domain $\Omega \subset \mathbb R^2$ with boundary $\partial \Omega = \Gamma_D \cup \Gamma_N$ where $\Gamma_D \cap \Gamma_N = \emptyset$; let $f \in L^2(\Omega)$, $g \in L^2(\Gamma_N)$, $u_D \in L^2(\Gamma_D)$, and $c \in \mathbb R$; the problem is to find $u$ such that
 $$
   -\nabla^2 u + c u = f, \quad x \in \Omega
-$$$$
+$$
+$$
   \left. u \right|_{x \in \Gamma_D} = u_D
-$$$$
+$$
+$$
   \left.\frac{\partial u}{\partial n}\right|_{x \in \Gamma_N} = g
 $$
 
