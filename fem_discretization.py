@@ -362,36 +362,7 @@ class P1FEMDiscretization():
         
         return M, S
         
-    def assemble_load_vector(self, f, use_linearization=True):
-        """
-        Build the load vector for the global system
-
-        Parameters
-        ----------
-        f : callable, signature f(x)
-            forcing function for elliptic problem.
-        use_linearization : boolean, optional
-            whether to use linearlization approximation 
-            replacing f by its interpolant.
-            The default is True
-
-        Returns
-        -------
-        load_vec : array of floats
-            load vector for matrix formulation.
-
-        """
-        if use_linearization:
-            load_vec = self.assemble_load_vector_linearized(f)
-            
-        else:
-            load_vec = self.assemble_load_vector_integration(f)
-            
-        self.whole_load_vector = load_vec
-        
-        return load_vec
-    
-    def assemble_load_vector_linearized(self, f):
+    def assemble_load_vector(self, f):
         """
         Build the load vector for the global system
         replaces f by its interpolant for computational efficiency
@@ -416,47 +387,7 @@ class P1FEMDiscretization():
         f_vec = np.array(list(map(f, list(self.mesh.coordinates))))
         load_vec = self.whole_mass_matrix @ f_vec
                 
-        return load_vec
-        
-    def assemble_load_vector_integration(self, f):
-        
-        # required objects for computing
-        z0_values = self.mesh.coordinates[self.mesh.elements[:, 0]]
-        B_l = self.mesh.compute_affine_transformation_matrices()
-        det_B = self.mesh.affine_trans_det()
-        
-        # build a function which can be evaluated
-        xhat, yhat = sm.symbols("xhat yhat")
-        pos_mat = sm.Matrix([[xhat], [yhat]])
-        z_mat = sm.Matrix([[z0], [z1]])
-        det = sm.symbols("det")
-        coords_mapping = self.template_matrix * pos_mat + z_mat
-        f_shifted = [f.subs([(x, coords_mapping[0]), 
-                             (y, coords_mapping[1])]) * phi.subs(
-                                 [(x, xhat), (y, yhat)])
-                     for phi in self.phi_hat]
-        f_shifted = [g.simplify() for g in f_shifted]
-        print(f_shifted)
-        wrapper_fun = [sm.integrate(g
-            (yhat, 0, 1 - xhat), (xhat, 0, 1)) for g in f_shifted]
-        print(wrapper_fun)
-        wrapper = sm.lambdify([[b00, b01, b10, b11, z0, z1, det]],
-                              det * sm.Matrix(wrapper_fun))
-        
-        # build iterable for use in mapping
-        iterable = zip(list(B_l), list(z0_values), list(det_B))
-        
-        # generate values
-        values = np.array(list(map(wrapper, iterable))).ravel()
-        
-        # rows and ordering 
-        indices = self.mesh.elements.ravel()
-        cols = np.ones_like(indices)
-        sparse_vec = sp.csr_matrix((values, (indices, cols)), 
-                                   shape=(self.mesh.num_nodes, 1))
-        # this needs to be a vector
-        load_vec = sparse_vec.toarray()
-        
+        self.whole_load_vector = load_vector
         return load_vec
         
         

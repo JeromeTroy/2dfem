@@ -22,7 +22,6 @@ The problem is currently set up for $H^1(\Omega)$ problems, where the mesh eleme
 ## Todos and Future Improvements
 
 - Implement elements including normal derivative computations
-- Delinearize load vector and traction vector computations
 - Sympy computation of basis functions from linear functionals
 - External mesh generation and loading
 - Square elements
