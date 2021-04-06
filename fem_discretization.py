@@ -10,7 +10,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
+from scipy.special import roots_legendre
 import sympy as sm
+
 
 import mesh as msh
 
@@ -531,27 +533,31 @@ class P1FEMDiscretization():
     
     def error_approx(self, u_sol, u_true):
         
-        z0, z1 = sm.symbols('z0, z1')
+        B_l = self.mesh.compute_affine_transformation_matrices()
+        det_B = self.mesh.affine_trans_det()
         
-        first_l2 = np.dot(u_sol, self.whole_mass_matrix @ u_sol)
+        # quadrature weights in 1D
+        # 4 th order ensures quadratic inner product accuracy
+        order = 4
+        original_roots, weights = roots_legendre(4)
         
-        u_squared = u_true(self.template_matrix * sm.Matrix(x, y) + 
-                      sm.Matrix([z0, z1]))
-        u_l2 = sm.integrate(u_squared, (y, 0, 1 - x), (x, 0, 1))
-        u_l2_fun = sm.lambdify([b00, b01, b10, b11, z0, z1], u_l2)
-        # TODO: apply to vectorized elements / coordinates
+        # shift to unit interval [0, 1]
+        x_roots = (original_roots + 1) / 2
         
-        # TODO: build middle term u * phi
-        # TOOD: H1 error
-        # vectorized values at coordinates
-        u_true_vec = np.array(list(map(u_true, list(self.mesh.coordinates))))
-
-        difference = u_sol - u_true_vec
+        # mesh together
+        x_roots_mat, y_roots_mat = np.meshgrid(x_roots, x_roots)
         
-        l2_error = np.dot(difference, 
-                          self.whole_mass_matrix @ difference)
-        h1_error = l2_error + np.dot(difference, 
-                                     self.whole_stiffness_matrix @ difference)
+        # shift y roots according to reference element
+        y_roots_mat *= (1 - x_roots)
+        
+        paired_coords = np.array(list(zip(list(x_roots_mat.ravel()), 
+                            list(y_roots_mat.ravel()))))
+        # integration can now be done on quadratic reference
+        integration_nodes = list(map(
+            lambda entry: (entry[0] @ paired_coords.T).T + entry[1], 
+            list(zip(list(B_l), 
+                     list(self.mesh.coordinates[self.mesh.elements[0, :], :])))))
+        print(integration_nodes)
         
         return h1_error, l2_error
     
@@ -671,7 +677,7 @@ class P1FEMDiscretization():
 if __name__ == "__main__":
     
     import time
-    mesh = msh.Mesh(coords_fname="coordinates2.dat", 
+    mesh = msh.Mesh(coords_fname="meshes/coordsdat", 
                     elements_fname="elements2.dat")
     
     num_refine = 8
@@ -731,13 +737,13 @@ if __name__ == "__main__":
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    #u_sol = disc1.solve(c, f, g, u_D)
+    u_sol = disc1.solve(c, f, g, u_D)
     
-    #l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D)
+    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D)
     
-    for alpha in range(num_refine):
-        print("refine no. ", alpha + 1)
-        disc1.blue_refine(memory_intensive=True)
+    # for alpha in range(num_refine):
+    #     print("refine no. ", alpha + 1)
+    #     disc1.blue_refine(memory_intensive=True)
         
         #u_sol = disc1.solve(c, f, g, u_D)
         #l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
