@@ -44,6 +44,20 @@ class Mesh():
         self.B_matrices = None
 
 
+    def reset_affine_trans(self):
+        """
+        Reset affine transformation details
+        they must be reset after mesh refinement
+
+        Returns
+        -------
+        None.
+
+        """
+        self.det_B_vals = None
+        self.B_inverses = None
+        self.B_matrices = None
+        
     def set_coordinates(self, coordinates):
         self.coordinates = coordinates
         # get number of nodes
@@ -210,6 +224,7 @@ class Mesh():
         self.set_coordinates(new_coordinates)
         self.set_elements(new_elements)
 
+        self.reset_affine_trans()
         # return useful tools for other purposes
         return midpoints, have_encountered
 
@@ -294,6 +309,8 @@ class Mesh():
         self.set_coordinates(np.array(new_coordinates))
         self.set_elements(new_elements.astype(np.int))
          
+        self.reset_affine_trans()
+        
         # this matrix must be symmetric
         midpoints_mat += midpoints_mat.T
         
@@ -370,6 +387,8 @@ class Mesh():
         self.num_elements *= 4
         self.elements = new_elements
         self.coordinates = new_coordinates
+        
+        self.reset_affine_trans()
         
         
         return midpoints_indices, have_encountered

@@ -603,7 +603,7 @@ class P1FEMDiscretization():
         
                                 
     
-    def error_approx(self, u_sol, u_true):
+    def l2_error(self, u_sol, u_true):
         
         B_l = self.mesh.compute_affine_transformation_matrices()
         det_B = self.mesh.affine_trans_det()
@@ -612,6 +612,7 @@ class P1FEMDiscretization():
         # 4 th order ensures quadratic inner product accuracy
         order = 4
         original_roots, weights = roots_legendre(4)
+        n = len(weights)
         
         # shift to unit interval [0, 1]
         x_roots = (original_roots + 1) / 2
@@ -624,14 +625,126 @@ class P1FEMDiscretization():
         
         paired_coords = np.array(list(zip(list(x_roots_mat.ravel()), 
                             list(y_roots_mat.ravel()))))
-        # integration can now be done on quadratic reference
-        integration_nodes = list(map(
-            lambda entry: (entry[0] @ paired_coords.T).T + entry[1], 
-            list(zip(list(B_l), 
-                     list(self.mesh.coordinates[self.mesh.elements[0, :], :])))))
-        print(integration_nodes)
         
-        return h1_error, l2_error
+        # integration can now be done on quadratic reference
+        # first map to respective nodes on each element
+        # integration_nodes_per_element = []
+        # for el in range(len(self.mesh.elements)):
+        #     scaling = (list(B_l)[el] @ paired_coords.T).T
+        #     shift = self.mesh.coordinates[self.mesh.elements[el, 0], :]
+        #     integration_nodes_per_element.append(scaling + shift)
+        integration_nodes_per_element = [
+            (B_l[el] @ paired_coords.T).T + 
+            self.mesh.coordinates[self.mesh.elements[el, 0], :] 
+            for el in range(len(self.mesh.elements))]
+        
+        # get true values at each node
+        u_true_values = [u_true([node_set[:, 0], node_set[:, 1]]) 
+                         for node_set in integration_nodes_per_element]
+        
+        # next get solution values (interpolated)
+        # the basis functions are linear and function as barycentric coords
+        # building l2_error
+        zeroth_bary_coords = 1 - x_roots_mat - y_roots_mat
+        
+        u_sol_values = [(u_sol[self.mesh.elements[l, 0]] * 
+                         zeroth_bary_coords + 
+                          u_sol[self.mesh.elements[l, 1]] * 
+                          x_roots_mat + 
+                          u_sol[self.mesh.elements[l, 2]] * 
+                          y_roots_mat).ravel() 
+                        for l in range(len(self.mesh.elements))]
+                
+        # building l2 error
+        difference = np.array(u_sol_values) - np.array(u_true_values)
+        tmp = np.tile(det_B, [np.shape(difference)[1], 1]).T
+        difference *= tmp
+        l2_error = sum([
+            np.dot(weights, 
+                   np.reshape(np.power(diff_val, 2), (n, n)) @ weights)
+            for diff_val in list(difference)])
+        
+        
+        return l2_error
+    
+    def h1_seminorm_error(self, u_sol_der, u_true_der):
+        
+        B_l = self.mesh.compute_affine_transformation_matrices()
+        det_B = self.mesh.affine_trans_det()
+        
+        # quadrature weights in 1D
+        # 4 th order ensures quadratic inner product accuracy
+        order = 4
+        original_roots, weights = roots_legendre(4)
+        n = len(weights)
+        
+        # shift to unit interval [0, 1]
+        x_roots = (original_roots + 1) / 2
+        
+        # mesh together
+        x_roots_mat, y_roots_mat = np.meshgrid(x_roots, x_roots)
+        
+        # shift y roots according to reference element
+        y_roots_mat *= (1 - x_roots)
+        
+        paired_coords = np.array(list(zip(list(x_roots_mat.ravel()), 
+                            list(y_roots_mat.ravel()))))
+        
+        integration_nodes_per_element = [
+            (B_l[el] @ paired_coords.T).T + 
+            self.mesh.coordinates[self.mesh.elements[el, 0], :] 
+            for el in range(len(self.mesh.elements))]
+        
+        # get true values at each node
+        u_true_values = [u_true_der([node_set[:, 0], node_set[:, 1]]) 
+                         for node_set in integration_nodes_per_element]
+        
+        # solution gradient values
+        # are piecewise constant
+        u_sol_values = np.tile(u_sol_der, (np.shape(u_true_values)[1], 1)).T
+        
+        difference = u_sol_values - u_true_values
+        
+        # apply integration
+        tmp = np.tile(det_B, [np.shape(difference)[1], 1]).T
+        difference *= tmp
+        l2_error = sum([
+            np.dot(weights, 
+                   np.reshape(np.power(diff_val, 2), (n, n)) @ weights)
+            for diff_val in list(difference)])
+        
+        return l2_error
+    
+    def error_approx(self, u_sol, u_true, u_true_x, u_true_y):
+        
+        l2_error_sq = self.l2_error(u_sol, u_true)
+        
+        B_l_inv = self.mesh.affine_trans_mat_inverse()
+        
+        # compute grad(u_h) for each element using the derivatives of the 
+        # basis functions
+        u_sol_grad = np.zeros([len(self.mesh.elements), 2])
+        
+        grad_phi_hat_vals = self.grad_phi_hat.astype(np.float)
+        
+        gradients = np.array(list(map(
+                lambda mat: (mat.T @ grad_phi_hat_vals.T).T, list(B_l_inv))))
+        
+        for rel_index in range(3):
+            u_sol_grad += np.tile(u_sol[self.mesh.elements[:, rel_index]], 
+                                  (2, 1)).T * gradients[:, rel_index, :]
+            
+        
+        l2_error_x_sq = self.h1_seminorm_error(u_sol_grad[:, 0], u_true_x)
+        l2_error_y_sq = self.h1_seminorm_error(u_sol_grad[:, 1], u_true_y)
+        
+        h1_error_sq = l2_error_sq + l2_error_x_sq + l2_error_y_sq
+        
+        l2_error = np.sqrt(l2_error_sq)
+        h1_error = np.sqrt(h1_error_sq)
+        
+        return l2_error, h1_error
+        
     
     def neumann_edge_lengths(self):
         """
@@ -749,10 +862,10 @@ class P1FEMDiscretization():
 if __name__ == "__main__":
     
     import time
-    mesh = msh.Mesh(coords_fname="meshes/coords_L_shaped.dat", 
-                    elements_fname="meshes/elements_L_shaped.dat")
+    mesh = msh.Mesh(coords_fname="meshes/coords_unit_square.dat", 
+                    elements_fname="meshes/elements_unit_square.dat")
     
-    num_refine = 0
+    num_refine = 3
     # l2_errors = np.zeros(num_refine + 1)
     # h1_errors = np.zeros(num_refine + 1)
     
@@ -780,9 +893,14 @@ if __name__ == "__main__":
     u_D_full_sm = u_D_full_sm.subs(t, theta).simplify()
     f_full_sm = f_full_sm.subs(t, theta).simplify()
     
+    u_D_full_sm_x = sm.diff(u_D_full_sm, x).simplify()
+    u_D_full_sm_y = sm.diff(u_D_full_sm, y).simplify()
+    
     #print(u_D_sm)
     u_D = sm.lambdify([(x, y)], u_D_full_sm)
     f = sm.lambdify([(x, y)], -f_full_sm)
+    u_D_x = sm.lambdify([(x, y)], u_D_full_sm_x)
+    u_D_y = sm.lambdify([(x, y)], u_D_full_sm_y)
     
     g = lambda x: 0
     
@@ -795,41 +913,49 @@ if __name__ == "__main__":
     
     disc1 = P1FEMDiscretization(mesh=mesh)
     
+    # dirichlet_edges = np.array([
+    #     [0, 1],
+    #     [1, 4],
+    #     [4, 5],
+    #     [5, 10], 
+    #     [10, 9],
+    #     [9, 8],
+    #     [8, 3],
+    #     [3, 0]])
     dirichlet_edges = np.array([
-        [0, 1],
-        [1, 4],
-        [4, 5],
-        [5, 10], 
-        [10, 9],
-        [9, 8],
-        [8, 3],
+        [0, 1], 
+        [1, 2], 
+        [2, 3], 
         [3, 0]])
     # dirichlet_edges -= 1
     neumann_edges = np.array([])
     
     disc1.set_boundaries(dirichlet_edges, neumann_edges)
     
-    #u_sol = disc1.solve(c, f, g, u_D)
+    disc1.blue_refine()
+    
     u_sol = disc1.solve(c, f, g, u_D)
     
-    l2_errors, h1_errors = disc1.error_approx(u_sol, u_D)
+    l2_errors = np.zeros(num_refine + 1)
+    h1_errors = np.zeros(num_refine + 1)
+    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D, u_D_x, u_D_y)
     
-    # for alpha in range(num_refine):
-    #     print("refine no. ", alpha + 1)
-    #     disc1.blue_refine(memory_intensive=True)
+    for alpha in range(num_refine):
+        print("refine no. ", alpha + 1)
+        disc1.blue_refine(memory_intensive=True)
         
-        #u_sol = disc1.solve(c, f, g, u_D)
-        #l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
-        #                                                                u_D)
+        u_sol = disc1.solve(c, f, g, u_D)
+        l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
+                                                        u_D, u_D_x, u_D_y)
     
     #disc1.plot_mesh()
-    # l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
-    # h1_order = np.log2(h1_errors[:-1] / h1_errors[1:])
+    l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
+    h1_order = np.log2(h1_errors[:-1] / h1_errors[1:])
     
-    # print("L2 errors: ", l2_errors)
-    # print("L2 orders: ", l2_order)
-    # print("H1 errors: ", h1_errors)
-    # print("H1 orders: ", h1_order)
+    print("L2 errors: ", l2_errors)
+    print("L2 orders: ", l2_order)
+    print("H1 errors: ", h1_errors)
+    print("H1 orders: ", h1_order)
     
     # from mpl_toolkits.mplot3d import Axes3D    
     
