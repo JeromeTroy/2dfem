@@ -15,12 +15,13 @@ import sympy as sm
 
 
 import mesh as msh
+from dg0_discretization import DG0FEMDiscretization
 
 x, y = sm.symbols("x y")
 b00, b01, b10, b11 = sm.symbols("a b c d")
 z0, z1 = sm.symbols("z0, z1")
 
-class P1FEMDiscretization():
+class P1FEMDiscretization(DG0FEMDiscretization):
     """
     Finite Element discretization for continuous, piecewise linear 
     functions
@@ -30,16 +31,11 @@ class P1FEMDiscretization():
     """
 
     def __init__(self, mesh=None, is_sparse=True):
+        super().__init__(mesh=mesh, is_sparse=is_sparse)
         self.mesh = mesh
-        self.dirichletbc = None
-        self.neumannbc = None
         
-        self.whole_mass_matrix = None
         self.whole_stiffness_matrix = None
-        self.whole_load_vector = None
-        
-        self.is_sparse = is_sparse 
-        
+                
         self.phi_hat = [
             1 - x - y, 
             x, 
@@ -48,11 +44,9 @@ class P1FEMDiscretization():
         self.grad_phi_hat = np.array([[sm.diff(phi, x), sm.diff(phi, y)] 
                              for phi in self.phi_hat])
         
-        self.K_hat_area = 0.5
         
         # the ij entry of this is integral of phi_i * phi_j on K-hat
         
-        self.template_matrix = sm.Matrix([[b00, b01], [b10, b11]])
         self.integral_phis = np.zeros([len(self.phi_hat), len(self.phi_hat)])
         self.integral_grad_phis = []
         for i in range(len(self.phi_hat)):
@@ -70,64 +64,7 @@ class P1FEMDiscretization():
         
         self.integral_grad_phis = sm.lambdify([[b00, b01, b10, b11]],
                                             np.array(self.integral_grad_phis))
-        #fcts = [sm.lambdify([b00, b01, b10, b11], f) 
-        #        for f in self.integral_grad_phis.ravel()]
-        #self.integral_grad_phis = np.reshape(np.array(fcts), (3, 3))
-            
-            
         
-        #self.__elements_to_list__()
-        
-
-
-    def set_boundaries(self, dirichlet, neumann):
-        """
-        Set boundary locations
-
-        Input:
-            diriclet : array
-                locations of dirichlet nodes
-            neumann : array
-                locations of neumann nodes
-        """
-
-        self.dirichletbc = dirichlet
-        self.neumannbc = neumann
-
-    def set_mesh(self, mesh):
-        self.mesh = mesh
-
-    
-    def __collect_support__(self, node_num):
-        """
-        Determine which elements contain a given node
-
-        Parameters
-        ----------
-        node_num : int >= 0
-            index of the node in question.
-
-        Returns
-        -------
-        elements_containing_node : numpy array of type int
-            Which elements contain the node (which rows of elements array).
-
-        """
-        # determine which elements contain the node number given, 
-        # take only rows
-        #elements_containing_node = np.sum(
-        #    self.mesh.elements - node_num == 0, axis=1)
-        #elements_containing_node = np.where(
-        #    self.mesh.elements == node_num)[0]
-        
-        elements_containing_node = [int(node_num == lst[0]) + 
-                                    int(node_num == lst[1]) + 
-                                    int(node_num == lst[2]) for 
-                                    lst in list(self.mesh.elements)]
-        
-        #print(elements_containing_node)
-        
-        return np.array(elements_containing_node).astype(np.bool)
         
     def __collect_support_overlap__(self, basis_no_1, basis_no_2):
         """
@@ -201,7 +138,7 @@ class P1FEMDiscretization():
         
         return free_indices, dirichlet_indices
     
-    def __setup_linear_system__(self, c, f, g, u_D):
+    def __setup_linear_system__(self, c, f, g, u_D, base_approx=True):
         """
         Setup a linear system
 
@@ -215,6 +152,9 @@ class P1FEMDiscretization():
             neumann boundary condition.
         u_D : callable signature u_D(x)
             dirichlet boundary condition.
+        base_approx : boolean, optional
+            Whether to use DG0 approximation for load and traction vectors
+            The default is True
 
         Returns
         -------
@@ -224,11 +164,11 @@ class P1FEMDiscretization():
             resulting right hand side from matrix formulation.
 
         """
+        
+        self.assemble_load_vector(f, base_approx=base_approx)
+        self.assemble_traction_vector(g, base_approx=base_approx)
+        
         self.assemble_matrices()
-        #self.assemble_mass_matrix()
-        #self.assemble_stiffness_matrix()
-        self.assemble_load_vector(f)
-        self.assemble_traction_vector(g)
         
         free, taken = self.__extract_free_indices__()
         
@@ -247,7 +187,7 @@ class P1FEMDiscretization():
                 
         return A, b
     
-    def solve(self, c, f, g, u_D, build_whole=True):
+    def solve(self, c, f, g, u_D, build_whole=True, base_approx=True):
         """
         Solve linear system for finite elements
 
@@ -261,6 +201,12 @@ class P1FEMDiscretization():
             neumann boundary condition.
         u_D : callable signature u_D(x)
             dirichlet boundary condition.
+        build_whole : boolean, optional
+            Whether to pad the solution with the boundary values
+            The default is True
+        base_approx : boolean, optional
+            Whether to use the DG0 approximation for the load and traction vec
+            The default is True
 
         Returns
         -------
@@ -269,7 +215,8 @@ class P1FEMDiscretization():
 
         """
         # setup the linear system
-        A, b = self.__setup_linear_system__(c, f, g, u_D)
+        A, b = self.__setup_linear_system__(c, f, g, u_D, 
+                                            base_approx=base_approx)
         
         # solve
         if self.is_sparse:
@@ -362,7 +309,7 @@ class P1FEMDiscretization():
         
         return M, S
         
-    def assemble_load_vector(self, f):
+    def assemble_load_vector(self, f, base_approx=True):
         """
         Build the load vector for the global system
         replaces f by its interpolant for computational efficiency
@@ -371,6 +318,9 @@ class P1FEMDiscretization():
         ----------
         f : callable, signature f(x)
             forcing function for elliptic problem.
+        base_approx : boolean, optional
+            whether to approximate f by its interpolant in DG0 space
+            the default is True
 
         Returns
         -------
@@ -378,21 +328,40 @@ class P1FEMDiscretization():
             load vector for matrix formulation.
 
         """
-        # using the load vector as S @ f
-        # where S is stiffness matrix
-        # and f_i = f(z_i)
-        if self.whole_mass_matrix is None:
-            self.assemble_matrices()
+        
+        if base_approx:
             
-        f_vec = np.array(list(map(f, list(self.mesh.coordinates))))
-        load_vec = self.whole_mass_matrix @ f_vec
+            self.lower_disc = DG0FEMDiscretization(mesh=self.mesh, 
+                                                   is_sparse=self.is_sparse)
+            tmp_load_vec = self.lower_disc.assemble_load_vector(f)
+            
+            # size converter matrix
+            rows = self.mesh.elements.ravel()
+            cols = np.tile(np.arange(self.mesh.num_elements), [3, 1]).T.ravel()
+            data = np.ones_like(rows)
+            
+            converter_mat = sp.csr_matrix((data, (rows, cols)), 
+                                          shape=(self.mesh.num_nodes, 
+                                                 self.mesh.num_elements))
+            
+            # now build load vector
+            load_vec = (converter_mat @ tmp_load_vec) / 3
+        else:
+            # using the load vector as S @ f
+            # where S is stiffness matrix
+            # and f_i = f(z_i)
+            self.assemble_matrices()
                 
-        self.whole_load_vector = load_vector
+            f_vec = np.array(list(map(f, list(self.mesh.coordinates))))
+            load_vec = self.whole_mass_matrix @ f_vec
+                    
+            print(load_vec)
+        self.whole_load_vector = load_vec
         return load_vec
         
         
         
-    def assemble_traction_vector(self, g):
+    def assemble_traction_vector(self, g, base_approx=True):
         """
         Assemble traction vector
 
@@ -400,6 +369,9 @@ class P1FEMDiscretization():
         ----------
         g : callable, signature g(x)
             neumann boundary condition.
+        base_approx : boolean, optional
+            whether to approximate g by its interpolant in dg0 space.
+            The default is True
 
         Returns
         -------
@@ -407,142 +379,58 @@ class P1FEMDiscretization():
             traction vector for matrix formulation.
 
         """
-        N = np.shape(self.mesh.coordinates)[0]
-        Nn = np.shape(self.neumannbc)[0]
-        traction = np.zeros(N)
         
-        for edge_num in range(Nn):
+        if base_approx:
+            traction_dg = super().assemble_traction_vector(g)
             
-            # what elements touch this edge there is only 1
-            # extract the element
-            
-            # relative indices of edge nodes indicate that of phi
-            first_node = self.neumannbc[edge_num, 0]
-            second_node = self.neumannbc[edge_num, 1]
-            
-            # extract coordinates for ease of use
-            first_coord = self.mesh.coordinates[first_node, :]
-            second_coord = self.mesh.coordinates[second_node, :]
-            
-            # integral scaling
-            scaling = np.linalg.norm(self.mesh.coordinates[first_node] - 
-                                     self.mesh.coordinates[second_node])
-            
-            # integration done via linear approximation
-            traction[first_node] += scaling * \
-                (2 * g(first_coord) + g(second_coord)) / 6
-            traction[second_node] += scaling * \
-                (g(first_coord) + 2 * g(second_coord)) / 6
+            traction = np.zeros(self.mesh.num_nodes)
+            for edge_num in range(len(self.neumannbc)):
+                first_node_num, second_node_num = self.neumannbc[edge_num, :]
                 
+                traction[first_node_num] += 0.5 * traction_dg[edge_num]
+                traction[second_node_num] += 0.5 * traction_dg[edge_num]
+        else:
+            N = np.shape(self.mesh.coordinates)[0]
+            Nn = np.shape(self.neumannbc)[0]
+            traction = np.zeros(N)
+            
+            for edge_num in range(Nn):
+                
+                # what elements touch this edge there is only 1
+                # extract the element
+                
+                # relative indices of edge nodes indicate that of phi
+                first_node = self.neumannbc[edge_num, 0]
+                second_node = self.neumannbc[edge_num, 1]
+                
+                # extract coordinates for ease of use
+                first_coord = self.mesh.coordinates[first_node, :]
+                second_coord = self.mesh.coordinates[second_node, :]
+                
+                # integral scaling
+                scaling = np.linalg.norm(self.mesh.coordinates[first_node] - 
+                                         self.mesh.coordinates[second_node])
+                
+                # integration done via linear approximation
+                traction[first_node] += scaling * \
+                    (2 * g(first_coord) + g(second_coord)) / 6
+                traction[second_node] += scaling * \
+                    (g(first_coord) + 2 * g(second_coord)) / 6
+                    
         self.whole_traction_vector = traction
                 
         return traction
         
-                
-            
-    
-    def unif_refine(self):
-        """
-        Uniformly refine mesh and boundaries by
-        cutting each triangle into 4 congruent triangles
-        """
-
-        # refine mesh
-        #midpoints, nodes_have_encountered = self.mesh.unif_refine()
-        midpoints, nodes_have_encountered = self.mesh.blue_refine()
-        #midpoints, nodes_have_encountered = self.mesh.pink_refine()
-
-        # update boundary conditions
-        new_dirichlet = np.zeros([2 * np.shape(self.dirichletbc)[0], 2])
-        for j in range(np.shape(self.dirichletbc)[0]):
-            current_edge = self.dirichletbc[j, :]
-            new_dirichlet[2 * j, :] = [current_edge[0], 
-                                       midpoints[current_edge[0], 
-                                                 current_edge[1]]]
-            new_dirichlet[2 * j + 1, :] = [midpoints[current_edge[0], 
-                                                     current_edge[1]], 
-                                           current_edge[-1]]
-
-        new_neumann = np.zeros([2 * np.shape(self.neumannbc)[0], 2])
-        for j in range(np.shape(self.neumannbc)[0]):
-            current_edge = self.neumannbc[j, :]
-            new_neumann[2 * j, :] = [current_edge[0], 
-                                     midpoints[current_edge[0], 
-                                               current_edge[1]]]
-            new_neumann[2 * j + 1, :] = [midpoints[current_edge[0], 
-                                                   current_edge[1]], 
-                                         current_edge[-1]]
-
-        self.set_boundaries(new_dirichlet.astype(np.int), 
-                            new_neumann.astype(np.int))
-
-    def refine_edges(self, edges, midpoints):
-        """
-        Helper function to refine boundaries
-
-        Parameters
-        ----------
-        edges : N x 2 array
-            edges in question.
-        midpoints : N x N sparse array
-            indicates where each midpoint is indexed.
-
-        Returns
-        -------
-        new_edges : 2 N x 2 array
-            new boundary edges after refinement.
-
-        """
-        if len(edges) == 0:
-            return np.array([])
-        else:
-            new_edges = np.zeros([2 * len(edges), 2]).astype(np.int)
-            
-            new_edges[::2, 0] = edges[:, 0]
-            new_edges[1::2, 1] = edges[:, 1]
-            
-            new_edge_indices = [midpoints[e[0], e[1]] 
-                                     for e in list(edges)]
-            new_edges[1::2, 0] = np.array(new_edge_indices)
-            new_edges[::2, 1] = np.array(new_edge_indices)
-            
-            return new_edges
-    
-    def blue_refine(self, memory_intensive=False):
-        """
-        A faster uniform refinement
-
-        Parameters
-        ----------
-        memory_intensive : boolean
-            indicates if mesh is high resolution and will 
-            require a lot of memory
-            If this is True, relies on the slower pink_refine.
-            The default is False
-        Returns
-        -------
-        None.
-
-        """
-        if memory_intensive:
-            midpoints, have_encountered = self.mesh.pink_refine()
-        else:
-            midpoints, have_encountered = self.mesh.blue_refine()
-            
-        self.dirichletbc = self.refine_edges(self.dirichletbc, midpoints)
-        self.neumannbc = self.refine_edges(self.neumannbc, midpoints)
-        
                                 
     
-    def l2_error(self, u_sol, u_true):
+    def l2_error(self, u_sol, u_true, quad_order=4):
         
         B_l = self.mesh.compute_affine_transformation_matrices()
         det_B = self.mesh.affine_trans_det()
         
         # quadrature weights in 1D
         # 4 th order ensures quadratic inner product accuracy
-        order = 4
-        original_roots, weights = roots_legendre(4)
+        original_roots, weights = roots_legendre(quad_order)
         n = len(weights)
         
         # shift to unit interval [0, 1]
@@ -598,15 +486,14 @@ class P1FEMDiscretization():
         
         return l2_error
     
-    def h1_seminorm_error(self, u_sol_der, u_true_der):
+    def h1_seminorm_error(self, u_sol_der, u_true_der, quad_order=4):
         
         B_l = self.mesh.compute_affine_transformation_matrices()
         det_B = self.mesh.affine_trans_det()
         
         # quadrature weights in 1D
         # 4 th order ensures quadratic inner product accuracy
-        order = 4
-        original_roots, weights = roots_legendre(4)
+        original_roots, weights = roots_legendre(quad_order)
         n = len(weights)
         
         # shift to unit interval [0, 1]
@@ -646,9 +533,9 @@ class P1FEMDiscretization():
         
         return l2_error
     
-    def error_approx(self, u_sol, u_true, u_true_x, u_true_y):
+    def error_approx(self, u_sol, u_true, u_true_x, u_true_y, quad_order=4):
         
-        l2_error_sq = self.l2_error(u_sol, u_true)
+        l2_error_sq = self.l2_error(u_sol, u_true, quad_order=quad_order)
         
         B_l_inv = self.mesh.affine_trans_mat_inverse()
         
@@ -666,8 +553,10 @@ class P1FEMDiscretization():
                                   (2, 1)).T * gradients[:, rel_index, :]
             
         
-        l2_error_x_sq = self.h1_seminorm_error(u_sol_grad[:, 0], u_true_x)
-        l2_error_y_sq = self.h1_seminorm_error(u_sol_grad[:, 1], u_true_y)
+        l2_error_x_sq = self.h1_seminorm_error(u_sol_grad[:, 0], u_true_x, 
+                                               quad_order=quad_order)
+        l2_error_y_sq = self.h1_seminorm_error(u_sol_grad[:, 1], u_true_y, 
+                                               quad_order=quad_order)
         
         h1_error_sq = l2_error_sq + l2_error_x_sq + l2_error_y_sq
         
@@ -734,58 +623,7 @@ class P1FEMDiscretization():
         else:
             return None
         
-    def plot_mesh(self, show_indices=False, **kwargs):
-        """
-        Plot mesh with boundary conditions
-
-        Parameters
-        ----------
-        show_indices : boolean, optional
-            whether to display index numbers for each node.
-            The default is False.
-        **kwargs : extra arguments for plotting
-
-        Returns
-        -------
-        fig : matplotlib figure
-            figure containing plot.
-        ax : matplotlib axis
-            axis on figure containing plot.
-
-        """
-        
-        # plot mesh showing indices
-        fig, ax = self.mesh.plot_mesh(show_indices=show_indices, **kwargs)
-        
-        # colors of edges
-        dirichlet_color = "g"
-        neumann_color = "y"
-
-        # plot dirichlet bc
-        for edge_no in range(np.shape(self.dirichletbc)[0]):
-            
-            x_lst = self.mesh.coordinates[self.dirichletbc[edge_no], 0]
-            y_lst = self.mesh.coordinates[self.dirichletbc[edge_no], 1]
-            
-            if edge_no == 0:
-                ax.plot(x_lst, y_lst, dirichlet_color, label="dirichlet")
-            else:
-                ax.plot(x_lst, y_lst, dirichlet_color)
-        
-        # plot neumann bc
-        for edge_no in range(np.shape(self.neumannbc)[0]):
-            
-            x_lst = self.mesh.coordinates[self.neumannbc[edge_no], 0]
-            y_lst = self.mesh.coordinates[self.neumannbc[edge_no], 1]
-            
-            if edge_no == 0:
-                ax.plot(x_lst, y_lst, neumann_color, label="neumann")
-            else:
-                ax.plot(x_lst, y_lst, neumann_color)
-            
-        # add legend and return
-        ax.legend()
-        return fig, ax
+    
         
             
         
@@ -811,7 +649,7 @@ if __name__ == "__main__":
     beta = 2. / 3
     
     
-    u_D_full_sm = (1 - r**2) * r**b * sm.sin(b * t)
+    u_D_full_sm = (1 - r**2) * r**3 * sm.sin(b * t)
     f_full_sm = sm.diff(r * sm.diff(u_D_full_sm, r), r) / r + \
         sm.diff(u_D_full_sm, (t, 2)) / r**2
     
@@ -865,19 +703,22 @@ if __name__ == "__main__":
     
     disc1.blue_refine()
     
-    u_sol = disc1.solve(c, f, g, u_D)
+    u_sol = disc1.solve(c, f, g, u_D, base_approx=False)
     
+    quad_order = 16
     l2_errors = np.zeros(num_refine + 1)
     h1_errors = np.zeros(num_refine + 1)
-    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D, u_D_x, u_D_y)
+    l2_errors[0], h1_errors[0] = disc1.error_approx(u_sol, u_D, u_D_x, u_D_y, 
+                                                    quad_order=quad_order)
     
     for alpha in range(num_refine):
         print("refine no. ", alpha + 1)
         disc1.blue_refine(memory_intensive=True)
         
-        u_sol = disc1.solve(c, f, g, u_D)
+        u_sol = disc1.solve(c, f, g, u_D, base_approx=False)
         l2_errors[alpha + 1], h1_errors[alpha + 1] = disc1.error_approx(u_sol, 
-                                                        u_D, u_D_x, u_D_y)
+                                                        u_D, u_D_x, u_D_y, 
+                                                        quad_order=quad_order)
     
     #disc1.plot_mesh()
     l2_order = np.log2(l2_errors[:-1] / l2_errors[1:])
