@@ -5,7 +5,7 @@ Created on Wed Apr 21 16:14:34 2021
 
 @author: jerome
 
-Discretization for domain using L^\infty functions
+Discretization for domain using L^2 functions
 
 Given a set of elements \{K_l\} 
 each with vertices \{z_{k_{il}}\} for i = 0, 1, 2
@@ -33,7 +33,7 @@ class DG0(FEMDiscretization):
     """
     Finite element discretization on discontinous,
     piecewise constant elements
-    Basis for L^\infty
+    Basis for L^2
     """
         
     def __init__(self, mesh=None, is_sparse=True):
